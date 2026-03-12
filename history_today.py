@@ -10,6 +10,7 @@ import shutil
 from collections import Counter
 from pathlib import Path
 from typing import Any
+from urllib.parse import quote
 
 import pytz
 import requests
@@ -86,7 +87,7 @@ def build_user_agent() -> str:
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Aggregate on-this-day data and produce a summarized article payload.")
+    parser = argparse.ArgumentParser(description="Aggregate on-this-day data and produce a WeChat HTML article.")
     parser.add_argument("--date", help="Target date in YYYY-MM-DD format.")
     parser.add_argument("--month", type=int, help="Target month, used with --day.")
     parser.add_argument("--day", type=int, help="Target day, used with --month.")
@@ -128,12 +129,13 @@ def normalize_page(page: dict[str, Any]) -> dict[str, str]:
     mobile = content_urls.get("mobile") or {}
     titles = page.get("titles") or {}
     thumbnail = page.get("thumbnail") or {}
+    originalimage = page.get("originalimage") or {}
     return {
         "title": page.get("normalizedtitle") or titles.get("normalized") or page.get("title", ""),
         "url": desktop.get("page") or mobile.get("page", ""),
         "description": page.get("description", ""),
         "extract": page.get("extract", ""),
-        "thumbnail": thumbnail.get("source", ""),
+        "thumbnail": thumbnail.get("source", "") or originalimage.get("source", ""),
     }
 
 
@@ -356,8 +358,8 @@ def build_gemini_prompt(target_date: dt.date, merged_items: list[dict[str, Any]]
         "Return valid JSON only with this schema:\n"
         "{\n"
         '  "title": "click-enticing Chinese title under 22 chars",\n'
-        '  "summary": "90-140 Chinese characters summary",\n'
-        '  "content": "complete Chinese article body with multiple paragraphs separated by \\n\\n"\n'
+        '  "summary": "Chinese summary no more than 50 characters",\n'
+        '  "content_text": "complete Chinese article body with 4-6 paragraphs separated by \\n\\n"\n'
         "}\n"
         "Do not output markdown. Do not output HTML. Do not mention filtering.\n"
         f"Target date: {target_date.isoformat()}\n"
@@ -367,12 +369,14 @@ def build_gemini_prompt(target_date: dt.date, merged_items: list[dict[str, Any]]
 
 
 def validate_gemini_result(result: dict[str, Any]) -> dict[str, Any]:
-    for key in ("title", "summary", "content"):
+    for key in ("title", "summary", "content_text"):
         value = result.get(key, "")
         if not isinstance(value, str) or not value.strip():
             raise RuntimeError(f"Gemini output missing {key}")
         if is_china_related_text(value):
             raise RuntimeError("Gemini output contains filtered content.")
+    if len(result["summary"].strip()) > 50:
+        raise RuntimeError("Gemini output summary exceeds 50 characters.")
     return result
 
 
@@ -421,8 +425,8 @@ def build_fallback_article(target_date: dt.date, merged_items: list[dict[str, An
         paragraphs.append(f"{item['year']}年，{item['text']}")
     return {
         "title": f"{target_date.month}月{target_date.day}日发生了什么",
-        "summary": "这一天的历史并不平静，多条事件线索在同一天交叠，读下来像一组突然被拼在一起的时代切片。",
-        "content": "\n\n".join(paragraphs),
+        "summary": "这一天并不平静，几段历史在同日交错。",
+        "content_text": "\n\n".join(paragraphs),
     }
 
 
@@ -460,6 +464,22 @@ def cleanup_old_assets(today: dt.date, asset_root: Path, keep_days: int = 7) -> 
             shutil.rmtree(child, ignore_errors=True)
 
 
+def fetch_summary_image(page_title: str, lang: str) -> str:
+    if not page_title:
+        return ""
+    url = f"https://{lang}.wikipedia.org/api/rest_v1/page/summary/{quote(page_title, safe='')}"
+    response = requests.get(
+        url,
+        headers={"User-Agent": build_user_agent(), "Api-User-Agent": build_user_agent(), "Accept": "application/json"},
+        timeout=REQUEST_TIMEOUT,
+    )
+    response.raise_for_status()
+    payload = response.json()
+    thumbnail = payload.get("thumbnail") or {}
+    originalimage = payload.get("originalimage") or {}
+    return thumbnail.get("source", "") or originalimage.get("source", "")
+
+
 def download_image(url: str, target_dir: Path) -> str:
     if not url:
         return ""
@@ -473,7 +493,23 @@ def download_image(url: str, target_dir: Path) -> str:
     return str(file_path)
 
 
-def download_assets(target_date: dt.date, merged_items: list[dict[str, Any]]) -> tuple[str, list[str]]:
+def resolve_item_image_url(item: dict[str, Any], lang: str) -> str:
+    if item.get("image_url"):
+        return item["image_url"]
+    for page in item.get("pages", []):
+        if page.get("thumbnail"):
+            return page["thumbnail"]
+    for page in item.get("pages", []):
+        try:
+            image_url = fetch_summary_image(page.get("title", ""), lang)
+        except Exception:
+            image_url = ""
+        if image_url:
+            return image_url
+    return ""
+
+
+def download_assets(target_date: dt.date, merged_items: list[dict[str, Any]], lang: str) -> tuple[str, list[str]]:
     target_dir = ASSET_ROOT / target_date.isoformat()
     target_dir.mkdir(parents=True, exist_ok=True)
 
@@ -482,7 +518,7 @@ def download_assets(target_date: dt.date, merged_items: list[dict[str, Any]]) ->
     seen: set[str] = set()
 
     for item in merged_items:
-        source_url = item.get("image_url", "")
+        source_url = resolve_item_image_url(item, lang)
         if not source_url or source_url in seen:
             continue
         seen.add(source_url)
@@ -493,17 +529,36 @@ def download_assets(target_date: dt.date, merged_items: list[dict[str, Any]]) ->
             continue
         if not cover_url:
             cover_url = github_url
+            continue
         image_urls.append(github_url)
-        if len(image_urls) >= 8:
+        if len(image_urls) >= 7:
             break
 
     return cover_url, image_urls
 
 
-def save_outputs(payload: dict[str, Any], output_dir: Path) -> Path:
+def render_wechat_html(title: str, summary: str, content_text: str, cover_url: str, image_urls: list[str]) -> str:
+    paragraphs = [paragraph.strip() for paragraph in content_text.split("\n\n") if paragraph.strip()]
+    parts = [
+        "<section style=\"max-width:760px;margin:0 auto;padding:24px 18px;background:#f7f3ea;color:#1f2937;\">",
+        f"<h1 style=\"font-size:30px;line-height:1.35;margin:0 0 16px 0;color:#111827;\">{title}</h1>",
+        f"<p style=\"font-size:15px;line-height:1.8;color:#4b5563;margin:0 0 20px 0;\">{summary}</p>",
+    ]
+    if cover_url:
+        parts.append(f"<p style=\"margin:0 0 22px 0;\"><img src=\"{cover_url}\" style=\"width:100%;border-radius:12px;display:block;\"></p>")
+    for index, paragraph in enumerate(paragraphs):
+        parts.append(f"<p style=\"font-size:17px;line-height:1.95;margin:0 0 18px 0;\">{paragraph}</p>")
+        if index < len(image_urls):
+            parts.append(
+                f"<p style=\"margin:0 0 22px 0;\"><img src=\"{image_urls[index]}\" style=\"width:100%;border-radius:12px;display:block;\"></p>"
+            )
+    parts.append("</section>")
+    return "".join(parts)
+
+
+def save_outputs(payload: dict[str, Any], output_dir: Path, target_date: dt.date) -> Path:
     output_dir.mkdir(parents=True, exist_ok=True)
-    date_str = payload["date"]
-    json_path = output_dir / f"History_Today_{date_str}.json"
+    json_path = output_dir / f"History_Today_{target_date.isoformat()}.json"
     with json_path.open("w", encoding="utf-8") as file:
         json.dump(payload, file, ensure_ascii=False, indent=2)
     return json_path
@@ -531,16 +586,16 @@ def main() -> None:
     except Exception:
         article = build_fallback_article(target_date, merged_items)
 
-    cover_url, image_urls = download_assets(target_date, merged_items)
+    cover_url, image_urls = download_assets(target_date, merged_items, args.lang)
+    content_html = render_wechat_html(article["title"], article["summary"], article["content_text"], cover_url, image_urls)
     payload = {
-        "date": target_date.isoformat(),
         "title": article["title"],
         "summary": article["summary"],
-        "content": article["content"],
+        "content": content_html,
         "cover": cover_url,
         "images": image_urls,
     }
-    json_path = save_outputs(payload, Path(args.output_dir))
+    json_path = save_outputs(payload, Path(args.output_dir), target_date)
     print(f"Saved JSON to {json_path}")
 
 

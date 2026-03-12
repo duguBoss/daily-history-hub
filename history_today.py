@@ -33,7 +33,7 @@ SOURCE_API_NINJAS = "api_ninjas"
 UNSPLASH_SEARCH_URL = "https://api.unsplash.com/search/photos"
 OPENVERSE_IMAGES_URL = "https://api.openverse.org/v1/images/"
 COMMONS_API_URL = "https://commons.wikimedia.org/w/api.php"
-HUGGINGFACE_IMAGE_API_URL = "https://router.huggingface.co/hf-inference/models/stabilityai/stable-diffusion-3.5-large"
+Z_IMAGE_TURBO_BASE_URL = "https://mrfakename-z-image-turbo.hf.space"
 MONTH_NAMES = {
     1: "january",
     2: "february",
@@ -1132,34 +1132,89 @@ def build_generated_event_prompt(item: dict[str, Any], target_date: dt.date) -> 
     )
 
 
-def generate_huggingface_image(prompt: str, file_path: Path) -> str:
+def gradio_headers() -> dict[str, str]:
+    headers = {"Content-Type": "application/json"}
     api_key = os.environ.get("HF_API_TOKEN")
-    if not api_key:
-        log(f"Skip image generation for {file_path.name}: HF_API_TOKEN is missing")
-        return ""
+    if api_key:
+        headers["Authorization"] = f"Bearer {api_key}"
+    return headers
+
+
+def extract_gradio_event_id(payload: dict[str, Any]) -> str:
+    for key in ("event_id", "eventId"):
+        value = payload.get(key)
+        if isinstance(value, str) and value.strip():
+            return value
+    raise RuntimeError(f"Gradio response missing event id: {payload}")
+
+
+def parse_gradio_result_text(text: str) -> str:
+    data_lines: list[str] = []
+    for raw_line in text.splitlines():
+        line = raw_line.strip()
+        if not line.startswith("data:"):
+            continue
+        data_lines.append(line[5:].strip())
+    for chunk in reversed(data_lines):
+        try:
+            payload = json.loads(chunk)
+        except Exception:
+            continue
+        if isinstance(payload, list) and payload:
+            first = payload[0]
+            if isinstance(first, str) and first.strip():
+                return first
+        if isinstance(payload, dict):
+            for key in ("url", "path"):
+                value = payload.get(key)
+                if isinstance(value, str) and value.strip():
+                    return value
+    raise RuntimeError(f"Unable to parse Gradio generation result: {text[:800]}")
+
+
+def join_hf_space_url(path_or_url: str) -> str:
+    if path_or_url.startswith("http://") or path_or_url.startswith("https://"):
+        return path_or_url
+    if path_or_url.startswith("/"):
+        return f"{Z_IMAGE_TURBO_BASE_URL}{path_or_url}"
+    return f"{Z_IMAGE_TURBO_BASE_URL}/{path_or_url}"
+
+
+def request_gradio_generated_image(prompt: str) -> str:
+    payload = {"data": [prompt, 768, 1344, 9, 42, True]}
+    start_response = requests.post(
+        f"{Z_IMAGE_TURBO_BASE_URL}/gradio_api/call/generate_image",
+        headers=gradio_headers(),
+        json=payload,
+        timeout=REQUEST_TIMEOUT * 2,
+    )
+    if not start_response.ok:
+        body_preview = start_response.text[:600].replace("\n", " ")
+        raise RuntimeError(f"Gradio start request failed: HTTP {start_response.status_code} {body_preview}")
+    event_id = extract_gradio_event_id(start_response.json())
+    log(f"Gradio event id: {event_id}")
+    result_response = requests.get(
+        f"{Z_IMAGE_TURBO_BASE_URL}/gradio_api/call/generate_image/{event_id}",
+        headers=gradio_headers(),
+        timeout=REQUEST_TIMEOUT * 8,
+    )
+    if not result_response.ok:
+        body_preview = result_response.text[:600].replace("\n", " ")
+        raise RuntimeError(f"Gradio result request failed: HTTP {result_response.status_code} {body_preview}")
+    return join_hf_space_url(parse_gradio_result_text(result_response.text))
+
+
+def generate_huggingface_image(prompt: str, file_path: Path) -> str:
     if file_path.exists():
         log(f"Reuse existing generated image: {file_path}")
         return str(file_path)
     log(f"Generating image: {file_path.name}")
-    log(f"Hugging Face prompt: {prompt[:240]}")
-    response = requests.post(
-        HUGGINGFACE_IMAGE_API_URL,
-        headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
-        json={
-            "inputs": f"{prompt} Wide cinematic 16:9 composition.",
-            "parameters": {"width": 1344, "height": 768},
-        },
-        timeout=REQUEST_TIMEOUT * 6,
-    )
-    if not response.ok:
-        body_preview = response.text[:600].replace("\n", " ")
-        log(f"Hugging Face request failed for {file_path.name}: HTTP {response.status_code} {body_preview}")
-        response.raise_for_status()
-    content_type = (response.headers.get("content-type") or "").lower()
-    if "application/json" in content_type:
-        body_preview = response.text[:600].replace("\n", " ")
-        raise RuntimeError(f"Hugging Face returned JSON instead of image for {file_path.name}: {body_preview}")
-    file_path.write_bytes(response.content)
+    log(f"Gradio prompt: {prompt[:240]}")
+    image_url = request_gradio_generated_image(prompt)
+    log(f"Generated remote image URL: {image_url}")
+    download_response = requests.get(image_url, headers={"User-Agent": build_user_agent()}, timeout=REQUEST_TIMEOUT * 4)
+    download_response.raise_for_status()
+    file_path.write_bytes(download_response.content)
     log(f"Saved generated image: {file_path}")
     return str(file_path)
 

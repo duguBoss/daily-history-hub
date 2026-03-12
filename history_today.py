@@ -1,109 +1,87 @@
 import datetime
 import hashlib
-import html
 import json
-import mimetypes
 import os
 import re
 import time
 from pathlib import Path
-from typing import Any
-from urllib.parse import urlparse
-import pytz
-import requests
+from playwright.sync_api import sync_playwright
 from bs4 import BeautifulSoup
+import pytz
 
-# ================= 配置区域 =================
 SHANGHAI_TZ = pytz.timezone("Asia/Shanghai")
 ASSET_ROOT = Path("assets") / "history"
 TOP_BANNER_URL = "https://mmbiz.qpic.cn/mmbiz_gif/3hAJnwuyZuicicZkgJBUCCaricdibomDBrTzXgUR7FJnf11qGIo8nmKt6RxibXrb5s4RFb9UZ9UOHQy7fqQyI377Licw/0?wx_fmt=gif"
 BOTTOM_BANNER_URL = "https://mmbiz.qpic.cn/mmbiz_gif/3hAJnwuyZuicicZkgJBUCCaricdibomDBrTzk57DCmhVC16o9ILH0Tn1YPEiarfLRRQSVFN2mJdeYibGnBPialPIzvojw/0?wx_fmt=gif"
-HEADERS = {
-    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
-}
 
-def download_image(image_url: str, target_dir: Path, file_stem: str) -> str:
-    response = requests.get(image_url, stream=True, timeout=30, headers=HEADERS)
-    response.raise_for_status()
-    content = response.content
-    if len(content) < 5000: raise ValueError("Image too small")
-    
-    digest = hashlib.sha1(content).hexdigest()[:8]
-    ext = ".jpg" # 强制转为jpg确保微信显示兼容
-    filename = f"{file_stem}-{digest}{ext}"
-    target_dir.mkdir(parents=True, exist_ok=True)
-    path = target_dir / filename
-    path.write_bytes(content)
-    
-    repo = os.environ.get("GITHUB_REPOSITORY", "duguBoss/daily-news-hub")
-    branch = os.environ.get("GITHUB_REF_NAME", "main")
-    return f"https://raw.githubusercontent.com/{repo}/{branch}/{path.as_posix()}"
+def save_image(img_url, target_dir):
+    try:
+        import requests
+        resp = requests.get(img_url, timeout=20)
+        resp.raise_for_status()
+        digest = hashlib.sha1(resp.content).hexdigest()[:8]
+        filename = f"hist-{digest}.jpg"
+        target_dir.mkdir(parents=True, exist_ok=True)
+        path = target_dir / filename
+        path.write_bytes(resp.content)
+        repo = os.environ.get("GITHUB_REPOSITORY", "duguBoss/daily-news-hub")
+        branch = os.environ.get("GITHUB_REF_NAME", "main")
+        return f"https://raw.githubusercontent.com/{repo}/{branch}/{path.as_posix()}"
+    except Exception as e:
+        print(f"Img save error: {e}")
+        return None
 
-def fetch_history_today() -> dict:
+def fetch_data():
     now = datetime.datetime.now(SHANGHAI_TZ)
     month_day = f"{now.month}月{now.day}日"
     url = f"https://zh.wikipedia.org/zh-cn/Wikipedia:历史上的今天/{month_day}"
     
-    resp = requests.get(url, headers=HEADERS, timeout=30)
-    soup = BeautifulSoup(resp.text, 'html.parser')
+    with sync_playwright() as p:
+        browser = p.chromium.launch(headless=True)
+        page = browser.new_page()
+        page.goto(url, wait_until="networkidle")
+        content = page.content()
+        browser.close()
 
-    # 提取事件
+    soup = BeautifulSoup(content, 'html.parser')
     events = []
-    for ul in soup.select('.mw-parser-output > ul')[:3]:
-        for li in ul.find_all('li', recursive=False):
-            text = li.get_text().strip()
-            match = re.match(r'^(\d+年(?:前)?)[：:\-\—\s]*(.*)', text)
-            if match:
-                events.append({"year": match.group(1), "description": match.group(2)})
-    
-    # 提取图片
+    for li in soup.find_all('li'):
+        text = li.get_text().strip()
+        match = re.match(r'^(\d{1,4}年(?:前)?)[：:\-\—\s]*(.*)', text)
+        if match and len(match.group(2)) > 5:
+            events.append({"year": match.group(1), "description": match.group(2)})
+            
     images = []
-    for img in soup.select('.mw-parser-output img'):
+    for img in soup.find_all('img'):
         src = img.get('src', '')
-        if int(img.get('width', 0) or 0) > 100 and "upload.wikimedia.org" in src and not src.endswith('.svg'):
+        if int(img.get('width', 0) or 0) > 200 and "upload.wikimedia.org" in src and not src.lower().endswith('.svg'):
             if src.startswith('//'): src = 'https:' + src
             src = re.sub(r'/(\d+)px-', r'/800px-', src)
             if src not in images: images.append(src)
+            
+    return {"title": "带你看看历史上的今天发生了什么？", "date": month_day, "events": events, "images": images}
 
-    # 下载图片
-    date_str = now.strftime("%Y-%m-%d")
-    target_dir = ASSET_ROOT / date_str
-    downloaded = []
-    for i, url in enumerate(images[:3]):
-        try: downloaded.append(download_image(url, target_dir, f"hist-{i}"))
-        except: continue
-        
-    return {"title": "带你看看历史上的今天发生了什么？", "date": month_day, "events": events, "images": downloaded}
-
-def render_html(data: dict) -> str:
-    parts = [
-        "<section style=\"margin:0;padding:0;background:#ffffff;\">",
-        f"<img src=\"{TOP_BANNER_URL}\" style=\"width:100%;display:block;\">",
-        "<section style=\"max-width:760px;margin:0 auto;padding:2px;\">",
-        "<section style=\"margin:12px 0 16px 0;padding:2px 2px 8px 2px;border-bottom:2px solid #1e293b;\">",
-        f"<h1 style=\"margin:0;font-size:26px;color:#0f172a;font-weight:bold;\">{html.escape(data['title'])}</h1>",
-        "</section>"
-    ]
-    for img in data['images']:
-        parts.append(f"<section style=\"margin:0 0 10px 0;\"><img src=\"{html.escape(img)}\" style=\"width:100%;display:block;border-radius:4px;\"></section>")
-    for event in data['events']:
-        parts.append(f"<div style=\"margin:0 0 16px 0;padding-left:12px;border-left:4px solid #b59f7b;\"><p style=\"margin:0;color:#334155;font-size:16px;line-height:1.8;\"><strong style=\"color:#1e293b;\">{html.escape(event['year'])}</strong> {html.escape(event['description'])}</p></div>")
-    parts.append(f"<img src=\"{BOTTOM_BANNER_URL}\" style=\"width:100%;display:block;\"></section></section>")
+def render_html(data):
+    parts = ["<section style='margin:0;padding:0;background:#ffffff;'><img src='{}' style='width:100%;display:block;'>".format(TOP_BANNER_URL)]
+    parts.append("<section style='max-width:760px;margin:0 auto;padding:2px;'><section style='margin:12px 0;border-bottom:2px solid #1e293b;'><h1 style='font-size:24px;'>{}</h1></section>".format(data['title']))
+    for img in data['images'][:3]:
+        parts.append(f"<img src='{img}' style='width:100%;margin-bottom:10px;border-radius:4px;'>")
+    for e in data['events'][:15]:
+        parts.append(f"<div style='border-left:4px solid #b59f7b;padding-left:10px;margin-bottom:15px;'><p style='font-size:16px;'><strong>{e['year']}</strong> {e['description']}</p></div>")
+    parts.append(f"<img src='{BOTTOM_BANNER_URL}' style='width:100%;'></section></section>")
     return "".join(parts)
 
 def main():
-    try:
-        data = fetch_history_today()
-        if not data['events']: raise ValueError("No events found")
-        data['wechat_html'] = render_html(data)
-        
-        filename = f"History_Today_{datetime.datetime.now(SHANGHAI_TZ).strftime('%Y-%m-%d')}.json"
-        with open(filename, "w", encoding="utf-8") as f:
-            json.dump(data, f, ensure_ascii=False, indent=2)
-        print(f"✅ Success: {filename}")
-    except Exception as e:
-        print(f"❌ Error: {e}")
-        raise e
+    data = fetch_data()
+    if len(data['events']) < 5: raise ValueError("No valid events found")
+    
+    date_str = datetime.datetime.now(SHANGHAI_TZ).strftime("%Y-%m-%d")
+    target_dir = ASSET_ROOT / date_str
+    data['images'] = [save_image(i, target_dir) for i in data['images'][:3] if save_image(i, target_dir)]
+    data['wechat_html'] = render_html(data)
+    
+    with open(f"History_Today_{date_str}.json", "w", encoding="utf-8") as f:
+        json.dump(data, f, ensure_ascii=False, indent=2)
 
 if __name__ == "__main__":
     main()

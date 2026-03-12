@@ -481,6 +481,85 @@ def fetch_summary_image(page_title: str, lang: str) -> str:
     return thumbnail.get("source", "") or originalimage.get("source", "")
 
 
+def fetch_pageimages_image(page_title: str, lang: str) -> str:
+    if not page_title:
+        return ""
+    url = f"https://{lang}.wikipedia.org/w/api.php"
+    response = requests.get(
+        url,
+        params={
+            "action": "query",
+            "prop": "pageimages",
+            "titles": page_title,
+            "piprop": "original|thumbnail|name",
+            "pithumbsize": 1600,
+            "format": "json",
+        },
+        headers={"User-Agent": build_user_agent(), "Accept": "application/json"},
+        timeout=REQUEST_TIMEOUT,
+    )
+    response.raise_for_status()
+    payload = response.json()
+    pages = ((payload.get("query") or {}).get("pages") or {}).values()
+    for page in pages:
+        original = page.get("original") or {}
+        thumbnail = page.get("thumbnail") or {}
+        if original.get("source"):
+            return original["source"]
+        if thumbnail.get("source"):
+            return thumbnail["source"]
+    return ""
+
+
+def fetch_page_embedded_image(page_title: str, lang: str) -> str:
+    if not page_title:
+        return ""
+    url = f"https://{lang}.wikipedia.org/w/api.php"
+    response = requests.get(
+        url,
+        params={
+            "action": "query",
+            "prop": "images",
+            "titles": page_title,
+            "imlimit": 10,
+            "format": "json",
+        },
+        headers={"User-Agent": build_user_agent(), "Accept": "application/json"},
+        timeout=REQUEST_TIMEOUT,
+    )
+    response.raise_for_status()
+    payload = response.json()
+    pages = ((payload.get("query") or {}).get("pages") or {}).values()
+    for page in pages:
+        for image in page.get("images") or []:
+            image_title = image.get("title", "")
+            if not image_title.startswith("File:"):
+                continue
+            try:
+                file_response = requests.get(
+                    url,
+                    params={
+                        "action": "query",
+                        "titles": image_title,
+                        "prop": "imageinfo",
+                        "iiprop": "url",
+                        "format": "json",
+                    },
+                    headers={"User-Agent": build_user_agent(), "Accept": "application/json"},
+                    timeout=REQUEST_TIMEOUT,
+                )
+                file_response.raise_for_status()
+                file_payload = file_response.json()
+                file_pages = ((file_payload.get("query") or {}).get("pages") or {}).values()
+                for file_page in file_pages:
+                    imageinfo = file_page.get("imageinfo") or []
+                    if imageinfo and imageinfo[0].get("url"):
+                        return imageinfo[0]["url"]
+            except Exception:
+                continue
+    return ""
+
+
 def absolutize_image_url(image_url: str) -> str:
     if not image_url:
         return ""
@@ -544,6 +623,20 @@ def resolve_item_image_url(item: dict[str, Any], lang: str) -> str:
     for page in item.get("pages", []):
         if page.get("thumbnail"):
             return page["thumbnail"]
+    for page in item.get("pages", []):
+        try:
+            image_url = fetch_pageimages_image(page.get("title", ""), lang)
+        except Exception:
+            image_url = ""
+        if image_url:
+            return image_url
+    for page in item.get("pages", []):
+        try:
+            image_url = fetch_page_embedded_image(page.get("title", ""), lang)
+        except Exception:
+            image_url = ""
+        if image_url:
+            return image_url
     for page in item.get("pages", []):
         try:
             image_url = fetch_detail_page_image(page.get("url", ""))

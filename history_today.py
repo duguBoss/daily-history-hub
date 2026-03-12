@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import datetime as dt
 import hashlib
+import html
 import json
 import mimetypes
 import os
@@ -20,11 +21,12 @@ import requests
 SHANGHAI_TZ = pytz.timezone("Asia/Shanghai")
 REQUEST_TIMEOUT = 30
 DEFAULT_WIKIPEDIA_LANG = os.environ.get("WIKIPEDIA_LANG", "zh")
-DEFAULT_LIMIT = int(os.environ.get("HISTORY_TODAY_LIMIT", "18"))
+DEFAULT_LIMIT = int(os.environ.get("HISTORY_TODAY_LIMIT", "5"))
 DEFAULT_OUTPUT_DIR = Path(os.environ.get("OUTPUT_DIR", "output"))
 ASSET_ROOT = Path("assets") / "generated" / "history_today"
 PRIMARY_GEMINI_MODEL = "gemini-3.1-pro-preview"
 FALLBACK_GEMINI_MODEL = "gemini-3.1-flash-lite-preview"
+SOURCE_BRITANNICA = "britannica"
 SOURCE_WIKIMEDIA = "wikimedia"
 SOURCE_DAYINHISTORY = "dayinhistory"
 SOURCE_API_NINJAS = "api_ninjas"
@@ -154,6 +156,147 @@ def is_china_related_item(item: dict[str, Any]) -> bool:
             ]
         )
     return any(is_china_related_text(field) for field in fields if field)
+
+
+def britannica_date_url(target_date: dt.date) -> str:
+    month_name = MONTH_NAMES[target_date.month].title()
+    return f"https://www.britannica.com/on-this-day/{month_name}-{target_date.day}"
+
+
+def replace_img_with_markers(html_text: str) -> str:
+    def repl(match: re.Match[str]) -> str:
+        tag = match.group(0)
+        alt_match = re.search(r'alt="([^"]*)"', tag, flags=re.IGNORECASE)
+        src_match = re.search(r'src="([^"]*)"', tag, flags=re.IGNORECASE)
+        alt_text = html.unescape(alt_match.group(1)) if alt_match else ""
+        src = src_match.group(1) if src_match else ""
+        if src.startswith("//"):
+            src = f"https:{src}"
+        if src.startswith("/"):
+            src = f"https://www.britannica.com{src}"
+        marker = f"Image: {normalize_text(alt_text)} || {src}".strip()
+        return f"\n{marker}\n" if src or alt_text else "\n"
+
+    return re.sub(r"<img\b[^>]*>", repl, html_text, flags=re.IGNORECASE)
+
+
+def html_to_lines(html_text: str) -> list[str]:
+    text = replace_img_with_markers(html_text)
+    text = re.sub(r"<script\b[^>]*>.*?</script>", " ", text, flags=re.IGNORECASE | re.DOTALL)
+    text = re.sub(r"<style\b[^>]*>.*?</style>", " ", text, flags=re.IGNORECASE | re.DOTALL)
+    text = re.sub(r"</?(?:p|div|section|article|li|ul|ol|h1|h2|h3|h4|h5|h6|br)\b[^>]*>", "\n", text, flags=re.IGNORECASE)
+    text = re.sub(r"<[^>]+>", " ", text)
+    text = html.unescape(text)
+    text = text.replace("\xa0", " ")
+    return [normalize_text(line) for line in text.splitlines() if normalize_text(line)]
+
+
+def parse_britannica_item(year: str, text_parts: list[str], image_url: str, detail_url: str) -> dict[str, Any]:
+    text = normalize_text(" ".join(text_parts))
+    description = ""
+    extract = text
+    if " ." in text:
+        text = text.replace(" .", ".")
+    if "." in text:
+        first_sentence, remainder = text.split(".", 1)
+        description = normalize_text(first_sentence)
+        extract = normalize_text(remainder)
+        if extract:
+            text = f"{description}. {extract}"
+        else:
+            text = description
+    return {
+        "source": SOURCE_BRITANNICA,
+        "category": "events",
+        "year": year,
+        "text": text,
+        "source_url": detail_url,
+        "pages": [
+            {
+                "title": description or text[:80],
+                "url": detail_url,
+                "description": description,
+                "extract": extract,
+                "thumbnail": image_url,
+                "wikidata_id": "",
+            }
+        ]
+        if text
+        else [],
+        "detail": {
+            "title": description or text[:80],
+            "url": detail_url,
+            "description": description,
+            "extract": extract,
+            "thumbnail": image_url,
+            "wikidata_id": "",
+        },
+        "image_url": image_url,
+    }
+
+
+def fetch_britannica(target_date: dt.date) -> dict[str, Any]:
+    url = britannica_date_url(target_date)
+    headers = {"User-Agent": build_user_agent(), "Accept": "text/html,application/xhtml+xml"}
+    response = requests.get(url, headers=headers, timeout=REQUEST_TIMEOUT)
+    response.raise_for_status()
+    lines = html_to_lines(response.text)
+    items: list[dict[str, Any]] = []
+    in_events = False
+    featured_taken = False
+    current_year = ""
+    current_image = ""
+    current_parts: list[str] = []
+    stop_markers = {"More Events On This Day", "This Day in History"}
+
+    def flush() -> None:
+        nonlocal current_year, current_image, current_parts
+        if current_year and current_parts:
+            item = parse_britannica_item(current_year, current_parts, current_image, url)
+            if item["text"] and not is_china_related_item(item):
+                items.append(item)
+        current_year = ""
+        current_image = ""
+        current_parts = []
+
+    for line in lines:
+        if line == "Featured Event":
+            in_events = True
+            featured_taken = False
+            flush()
+            continue
+        if line in stop_markers and items:
+            flush()
+            if line == "This Day in History":
+                break
+            in_events = line == "More Events On This Day"
+            continue
+        if line == "More Events On This Day":
+            flush()
+            in_events = True
+            continue
+        if not in_events:
+            continue
+        if line.startswith("Image: "):
+            _, _, payload = line.partition("Image: ")
+            _, _, src = payload.partition(" || ")
+            current_image = src.strip()
+            continue
+        year_match = re.fullmatch(r"\d{1,4}(?:\s*BCE)?", line)
+        if year_match:
+            if current_year:
+                flush()
+            current_year = line
+            continue
+        if line.startswith("By signing up"):
+            flush()
+            break
+        if current_year:
+            current_parts.append(line)
+            if not featured_taken:
+                featured_taken = True
+    flush()
+    return {"ok": bool(items), "items": items[:5], "endpoint": url}
 
 
 def wikimedia_candidates(lang: str, target_date: dt.date) -> list[tuple[str, dict[str, str]]]:
@@ -299,7 +442,8 @@ def merge_items(source_results: list[dict[str, Any]], limit: int) -> list[dict[s
                     "sources": [item.get("source", "")],
                     "source_urls": [item.get("source_url", "")] if item.get("source_url") else [],
                     "pages": item.get("pages", []),
-                    "detail": {},
+                    "detail": item.get("detail", {}),
+                    "image_url": item.get("image_url", ""),
                 }
                 continue
             if item.get("category") and item["category"] not in current["categories"]:
@@ -310,18 +454,36 @@ def merge_items(source_results: list[dict[str, Any]], limit: int) -> list[dict[s
                 current["source_urls"].append(item["source_url"])
             if not current["pages"] and item.get("pages"):
                 current["pages"] = item["pages"]
+            if not current.get("detail") and item.get("detail"):
+                current["detail"] = item["detail"]
+            if SOURCE_BRITANNICA in current["sources"] and item.get("source") == SOURCE_BRITANNICA:
+                if item.get("detail"):
+                    current["detail"] = item["detail"]
+                if item.get("pages"):
+                    current["pages"] = item["pages"]
+                if item.get("image_url"):
+                    current["image_url"] = item["image_url"]
 
-    ordered = sorted(merged.values(), key=lambda item: (-len(item["sources"]), str(item.get("year") or ""), item["text"]))
+    ordered = sorted(
+        merged.values(),
+        key=lambda item: (
+            SOURCE_BRITANNICA not in item["sources"],
+            -len(item["sources"]),
+            str(item.get("year") or ""),
+            item["text"],
+        ),
+    )
     results = []
     for item in ordered:
         if is_china_related_item(item):
             continue
-        image_url = ""
-        for page in item.get("pages", []):
-            if page.get("thumbnail"):
-                image_url = page["thumbnail"]
-                break
-        item["image_url"] = image_url
+        if not item.get("image_url"):
+            image_url = ""
+            for page in item.get("pages", []):
+                if page.get("thumbnail"):
+                    image_url = page["thumbnail"]
+                    break
+            item["image_url"] = image_url
         item["source_confidence"] = infer_confidence(item)
         results.append(item)
         if len(results) >= limit:
@@ -418,13 +580,15 @@ def build_gemini_prompt(target_date: dt.date, merged_items: list[dict[str, Any]]
     return (
         "You are writing a finished WeChat article in Simplified Chinese.\n"
         "Use only the facts in the JSON payload. Do not invent details.\n"
+        "Use Britannica-sourced item details as the primary narrative material.\n"
+        "Items from other sources may be mentioned briefly and should not be described as illustrated.\n"
         "Exclude anything related to China, CCP, PRC, ROC, Hong Kong, Macau, Taiwan, Tibet, Xinjiang, or Chinese dynasties.\n"
         "Write in a click-enticing style, but remain factual.\n"
         "Return valid JSON only with this schema:\n"
         "{\n"
         '  "title": "click-enticing Chinese title under 22 chars",\n'
         '  "summary": "Chinese summary no more than 50 characters",\n'
-        '  "content_text": "complete Chinese article body with 4-6 paragraphs separated by \\n\\n"\n'
+        '  "content_text": "complete Chinese article body with 5 short paragraphs separated by \\n\\n"\n'
         "}\n"
         "Do not output markdown. Do not output HTML. Do not mention filtering.\n"
         f"Target date: {target_date.isoformat()}\n"
@@ -777,52 +941,39 @@ def download_image(url: str, target_dir: Path) -> str:
     return str(file_path)
 
 
+def create_placeholder_cover(target_date: dt.date, target_dir: Path) -> str:
+    file_path = target_dir / "placeholder-cover.svg"
+    if not file_path.exists():
+        svg = f"""<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="720" viewBox="0 0 1280 720">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#111827" />
+      <stop offset="100%" stop-color="#6b7280" />
+    </linearGradient>
+  </defs>
+  <rect width="1280" height="720" fill="url(#bg)" />
+  <circle cx="1080" cy="140" r="110" fill="#f59e0b" fill-opacity="0.22" />
+  <circle cx="180" cy="580" r="160" fill="#f3f4f6" fill-opacity="0.10" />
+  <text x="96" y="250" fill="#f9fafb" font-family="Georgia, serif" font-size="74">History Today</text>
+  <text x="96" y="340" fill="#e5e7eb" font-family="Arial, sans-serif" font-size="34">Daily historical digest</text>
+  <text x="96" y="420" fill="#fde68a" font-family="Arial, sans-serif" font-size="40">{target_date.isoformat()}</text>
+</svg>
+"""
+        file_path.write_text(svg, encoding="utf-8")
+    return str(file_path)
+
+
 def resolve_item_image_url(item: dict[str, Any], lang: str) -> str:
+    if SOURCE_BRITANNICA not in item.get("sources", []):
+        return ""
     if item.get("image_url"):
         return item["image_url"]
-    try:
-        image_url = fetch_wikimedia_commons_image(item, lang)
-    except Exception:
-        image_url = ""
-    if image_url:
-        return image_url
+    detail = item.get("detail") or {}
+    if detail.get("thumbnail"):
+        return detail["thumbnail"]
     for page in item.get("pages", []):
         if page.get("thumbnail"):
             return page["thumbnail"]
-    for page in item.get("pages", []):
-        try:
-            image_url = fetch_pageimages_image(page.get("title", ""), lang)
-        except Exception:
-            image_url = ""
-        if image_url:
-            return image_url
-    for page in item.get("pages", []):
-        try:
-            image_url = fetch_page_embedded_image(page.get("title", ""), lang)
-        except Exception:
-            image_url = ""
-        if image_url:
-            return image_url
-    for page in item.get("pages", []):
-        try:
-            image_url = fetch_detail_page_image(page.get("url", ""))
-        except Exception:
-            image_url = ""
-        if image_url:
-            return image_url
-    for page in item.get("pages", []):
-        try:
-            image_url = fetch_summary_image(page.get("title", ""), lang)
-        except Exception:
-            image_url = ""
-        if image_url:
-            return image_url
-    try:
-        image_url = fetch_unsplash_image(item)
-    except Exception:
-        image_url = ""
-    if image_url:
-        return image_url
     return ""
 
 
@@ -834,14 +985,18 @@ def download_assets(target_date: dt.date, merged_items: list[dict[str, Any]], la
     image_urls: list[str] = []
     seen: set[str] = set()
 
+    def to_github_url(local_path_str: str) -> str:
+        local_path = Path(local_path_str)
+        absolute_path = local_path if local_path.is_absolute() else (Path.cwd() / local_path)
+        return github_asset_url(absolute_path.relative_to(Path.cwd()))
+
     for item in merged_items:
         source_url = resolve_item_image_url(item, lang)
         if not source_url or source_url in seen:
             continue
         seen.add(source_url)
         try:
-            local_path = Path(download_image(source_url, target_dir))
-            github_url = github_asset_url(local_path.relative_to(Path.cwd()))
+            github_url = to_github_url(download_image(source_url, target_dir))
         except Exception:
             continue
         if not cover_url:
@@ -887,6 +1042,7 @@ def main() -> None:
     cleanup_old_assets(target_date, ASSET_ROOT, keep_days=7)
 
     source_results = [
+        {"name": "Britannica On This Day", **fetch_britannica(target_date)},
         {"name": "Wikimedia On this day", **fetch_wikimedia(args.lang, target_date)},
         {"name": "Day in History", **fetch_dayinhistory(target_date)},
         {"name": "API Ninjas Historical Events", **fetch_api_ninjas(target_date)},
@@ -905,8 +1061,6 @@ def main() -> None:
         article = build_fallback_article(target_date, merged_items)
 
     cover_url, image_urls = download_assets(target_date, merged_items, args.lang)
-    if not cover_url:
-        raise RuntimeError("No usable image found after fetching detail pages and summary images.")
     content_html = render_wechat_html(article["title"], article["summary"], article["content_text"], cover_url, image_urls)
     payload = {
         "title": article["title"],

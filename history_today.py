@@ -11,7 +11,7 @@ import shutil
 from collections import Counter
 from pathlib import Path
 from typing import Any
-from urllib.parse import quote
+from urllib.parse import quote, urlencode
 
 import pytz
 import requests
@@ -28,6 +28,7 @@ FALLBACK_GEMINI_MODEL = "gemini-3.1-flash-lite-preview"
 SOURCE_WIKIMEDIA = "wikimedia"
 SOURCE_DAYINHISTORY = "dayinhistory"
 SOURCE_API_NINJAS = "api_ninjas"
+UNSPLASH_SEARCH_URL = "https://api.unsplash.com/search/photos"
 MONTH_NAMES = {
     1: "january",
     2: "february",
@@ -137,6 +138,7 @@ def normalize_page(page: dict[str, Any]) -> dict[str, str]:
         "description": page.get("description", ""),
         "extract": page.get("extract", ""),
         "thumbnail": thumbnail.get("source", "") or originalimage.get("source", ""),
+        "wikidata_id": page.get("wikibase_item", ""),
     }
 
 
@@ -297,6 +299,7 @@ def merge_items(source_results: list[dict[str, Any]], limit: int) -> list[dict[s
                     "sources": [item.get("source", "")],
                     "source_urls": [item.get("source_url", "")] if item.get("source_url") else [],
                     "pages": item.get("pages", []),
+                    "detail": {},
                 }
                 continue
             if item.get("category") and item["category"] not in current["categories"]:
@@ -339,6 +342,63 @@ def source_stats(source_results: list[dict[str, Any]], merged_items: list[dict[s
     return {"sources": per_source, "merged_count": len(merged_items), "agreement_breakdown": dict(sorted(agreement.items()))}
 
 
+def fetch_wikipedia_page_detail(page_title: str, lang: str) -> dict[str, str]:
+    if not page_title:
+        return {}
+    url = f"https://{lang}.wikipedia.org/api/rest_v1/page/summary/{quote(page_title, safe='')}"
+    response = requests.get(
+        url,
+        headers={"User-Agent": build_user_agent(), "Api-User-Agent": build_user_agent(), "Accept": "application/json"},
+        timeout=REQUEST_TIMEOUT,
+    )
+    response.raise_for_status()
+    payload = response.json()
+    titles = payload.get("titles") or {}
+    thumbnail = payload.get("thumbnail") or {}
+    originalimage = payload.get("originalimage") or {}
+    content_urls = payload.get("content_urls") or {}
+    desktop = content_urls.get("desktop") or {}
+    mobile = content_urls.get("mobile") or {}
+    return {
+        "title": titles.get("normalized") or payload.get("title", page_title),
+        "url": desktop.get("page") or mobile.get("page", ""),
+        "description": payload.get("description", ""),
+        "extract": normalize_text(payload.get("extract", "")),
+        "thumbnail": thumbnail.get("source", "") or originalimage.get("source", ""),
+        "wikidata_id": payload.get("wikibase_item", ""),
+    }
+
+
+def enrich_item_details(merged_items: list[dict[str, Any]], lang: str) -> None:
+    for item in merged_items:
+        if item.get("detail"):
+            continue
+        detail: dict[str, str] = {}
+        for page in item.get("pages", []):
+            detail = {
+                "title": page.get("title", ""),
+                "url": page.get("url", ""),
+                "description": page.get("description", ""),
+                "extract": normalize_text(page.get("extract", "")),
+                "thumbnail": page.get("thumbnail", ""),
+                "wikidata_id": page.get("wikidata_id", ""),
+            }
+            if detail["extract"] and detail["description"]:
+                break
+            try:
+                remote_detail = fetch_wikipedia_page_detail(page.get("title", ""), lang)
+            except Exception:
+                remote_detail = {}
+            for key, value in remote_detail.items():
+                if value and not detail.get(key):
+                    detail[key] = value
+            if detail.get("extract") or detail.get("description"):
+                break
+        item["detail"] = detail
+        if detail.get("thumbnail") and not item.get("image_url"):
+            item["image_url"] = detail["thumbnail"]
+
+
 def build_gemini_prompt(target_date: dt.date, merged_items: list[dict[str, Any]], stats: dict[str, Any]) -> str:
     compact_items = [
         {
@@ -348,6 +408,10 @@ def build_gemini_prompt(target_date: dt.date, merged_items: list[dict[str, Any]]
             "sources": item["sources"],
             "source_confidence": item["source_confidence"],
             "page_title": item["pages"][0]["title"] if item["pages"] else "",
+            "detail_title": (item.get("detail") or {}).get("title", ""),
+            "detail_description": (item.get("detail") or {}).get("description", ""),
+            "detail_extract": (item.get("detail") or {}).get("extract", ""),
+            "detail_url": (item.get("detail") or {}).get("url", ""),
         }
         for item in merged_items
     ]
@@ -420,10 +484,15 @@ def call_gemini(prompt: str) -> dict[str, Any]:
 def build_fallback_article(target_date: dt.date, merged_items: list[dict[str, Any]]) -> dict[str, Any]:
     selected = merged_items[:6]
     paragraphs = [
-        f"{target_date.month}月{target_date.day}日留下了几段气氛截然不同的历史切片，权力变化、突发事件和人物命运在同一天交错出现。"
+        f"{target_date.month}月{target_date.day}日这一天，历史留下了几段气质截然不同的切片，权力更替、突发事件和人物命运在同一天交错出现。"
     ]
     for item in selected:
-        paragraphs.append(f"{item['year']}年，{item['text']}")
+        detail = item.get("detail") or {}
+        detail_text = detail.get("extract") or detail.get("description") or ""
+        if detail_text:
+            paragraphs.append(f"{item['year']}年，{item['text']}。维基页面补充提到：{detail_text}")
+        else:
+            paragraphs.append(f"{item['year']}年，{item['text']}。")
     return {
         "title": f"{target_date.month}月{target_date.day}日发生了什么",
         "summary": "这一天并不平静，几段历史在同日交错。",
@@ -479,6 +548,97 @@ def fetch_summary_image(page_title: str, lang: str) -> str:
     thumbnail = payload.get("thumbnail") or {}
     originalimage = payload.get("originalimage") or {}
     return thumbnail.get("source", "") or originalimage.get("source", "")
+
+
+def fetch_wikimedia_commons_image(item: dict[str, Any], lang: str) -> str:
+    detail = item.get("detail") or {}
+    candidate_titles = [page.get("title", "") for page in item.get("pages", []) if page.get("title")]
+    if detail.get("title"):
+        candidate_titles.insert(0, detail["title"])
+    seen_titles: set[str] = set()
+    for title in candidate_titles:
+        if title in seen_titles:
+            continue
+        seen_titles.add(title)
+        try:
+            image_url = fetch_pageimages_image(title, lang)
+        except Exception:
+            image_url = ""
+        if image_url:
+            return image_url
+    wikidata_id = detail.get("wikidata_id") or next((page.get("wikidata_id", "") for page in item.get("pages", [])), "")
+    if not wikidata_id:
+        return ""
+    wikidata_url = "https://www.wikidata.org/w/api.php"
+    commons_url = "https://commons.wikimedia.org/w/api.php"
+    response = requests.get(
+        wikidata_url,
+        params={"action": "wbgetentities", "ids": wikidata_id, "props": "claims", "format": "json"},
+        headers={"User-Agent": build_user_agent(), "Accept": "application/json"},
+        timeout=REQUEST_TIMEOUT,
+    )
+    response.raise_for_status()
+    entity = ((response.json().get("entities") or {}).get(wikidata_id)) or {}
+    claims = entity.get("claims") or {}
+    for prop in ("P18", "P154", "P41"):
+        for claim in claims.get(prop) or []:
+            mainsnak = claim.get("mainsnak") or {}
+            datavalue = mainsnak.get("datavalue") or {}
+            filename = datavalue.get("value")
+            if not isinstance(filename, str) or not filename.strip():
+                continue
+            file_title = filename if filename.startswith("File:") else f"File:{filename}"
+            file_response = requests.get(
+                commons_url,
+                params={"action": "query", "titles": file_title, "prop": "imageinfo", "iiprop": "url", "format": "json"},
+                headers={"User-Agent": build_user_agent(), "Accept": "application/json"},
+                timeout=REQUEST_TIMEOUT,
+            )
+            file_response.raise_for_status()
+            pages = ((file_response.json().get("query") or {}).get("pages") or {}).values()
+            for file_page in pages:
+                imageinfo = file_page.get("imageinfo") or []
+                if imageinfo and imageinfo[0].get("url"):
+                    return imageinfo[0]["url"]
+    return ""
+
+
+def build_unsplash_query(item: dict[str, Any]) -> str:
+    detail = item.get("detail") or {}
+    title = detail.get("title") or (item.get("pages") or [{}])[0].get("title", "")
+    text = item.get("text", "")
+    year = item.get("year")
+    query_parts = [part for part in [title, text, f"{year}", "history"] if part]
+    return normalize_text(" ".join(query_parts))[:180]
+
+
+def fetch_unsplash_image(item: dict[str, Any]) -> str:
+    access_key = os.environ.get("UNSPLASH_ACCESS_KEY")
+    if not access_key:
+        return ""
+    query = build_unsplash_query(item)
+    if not query:
+        return ""
+    response = requests.get(
+        UNSPLASH_SEARCH_URL,
+        params={"query": query, "page": 1, "per_page": 5, "orientation": "landscape", "content_filter": "high"},
+        headers={"Authorization": f"Client-ID {access_key}", "Accept-Version": "v1", "User-Agent": build_user_agent()},
+        timeout=REQUEST_TIMEOUT,
+    )
+    response.raise_for_status()
+    payload = response.json()
+    for result in payload.get("results") or []:
+        urls = result.get("urls") or {}
+        alt_description = normalize_text(result.get("alt_description", "") or result.get("description", ""))
+        text_blob = normalize_text(f"{query} {alt_description}").lower()
+        if "history" not in text_blob and "historic" not in text_blob:
+            continue
+        for key in ("raw", "full", "regular"):
+            if urls.get(key):
+                extra = {"q": "80", "fm": "jpg"}
+                separator = "&" if "?" in urls[key] else "?"
+                return f"{urls[key]}{separator}{urlencode(extra)}"
+    return ""
 
 
 def fetch_pageimages_image(page_title: str, lang: str) -> str:
@@ -620,6 +780,12 @@ def download_image(url: str, target_dir: Path) -> str:
 def resolve_item_image_url(item: dict[str, Any], lang: str) -> str:
     if item.get("image_url"):
         return item["image_url"]
+    try:
+        image_url = fetch_wikimedia_commons_image(item, lang)
+    except Exception:
+        image_url = ""
+    if image_url:
+        return image_url
     for page in item.get("pages", []):
         if page.get("thumbnail"):
             return page["thumbnail"]
@@ -651,6 +817,12 @@ def resolve_item_image_url(item: dict[str, Any], lang: str) -> str:
             image_url = ""
         if image_url:
             return image_url
+    try:
+        image_url = fetch_unsplash_image(item)
+    except Exception:
+        image_url = ""
+    if image_url:
+        return image_url
     return ""
 
 
@@ -724,6 +896,7 @@ def main() -> None:
         errors = [f"{item['name']}: {item.get('error', '')}" for item in source_results]
         raise RuntimeError(f"No merged items available. {' | '.join(errors)}")
 
+    enrich_item_details(merged_items, args.lang)
     stats = source_stats(source_results, merged_items)
     prompt = build_gemini_prompt(target_date, merged_items, stats)
     try:
@@ -741,6 +914,7 @@ def main() -> None:
         "content": content_html,
         "cover": cover_url,
         "images": image_urls,
+        "items": merged_items,
     }
     json_path = save_outputs(payload, Path(args.output_dir), target_date)
     print(f"Saved JSON to {json_path}")

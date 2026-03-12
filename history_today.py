@@ -6,6 +6,7 @@ import hashlib
 import json
 import mimetypes
 import os
+import re
 import shutil
 from collections import Counter
 from pathlib import Path
@@ -480,6 +481,50 @@ def fetch_summary_image(page_title: str, lang: str) -> str:
     return thumbnail.get("source", "") or originalimage.get("source", "")
 
 
+def absolutize_image_url(image_url: str) -> str:
+    if not image_url:
+        return ""
+    if image_url.startswith("//"):
+        return f"https:{image_url}"
+    return image_url
+
+
+def fetch_detail_page_image(detail_url: str) -> str:
+    if not detail_url:
+        return ""
+    response = requests.get(
+        detail_url,
+        headers={"User-Agent": build_user_agent(), "Accept": "text/html,application/xhtml+xml"},
+        timeout=REQUEST_TIMEOUT,
+    )
+    response.raise_for_status()
+    html_text = response.text
+
+    meta_patterns = [
+        r'<meta[^>]+property=["\']og:image["\'][^>]+content=["\']([^"\']+)["\']',
+        r'<meta[^>]+name=["\']twitter:image["\'][^>]+content=["\']([^"\']+)["\']',
+        r'<meta[^>]+itemprop=["\']image["\'][^>]+content=["\']([^"\']+)["\']',
+    ]
+    for pattern in meta_patterns:
+        match = re.search(pattern, html_text, flags=re.IGNORECASE)
+        if match:
+            return absolutize_image_url(match.group(1).strip())
+
+    image_patterns = [
+        r'<img[^>]+src=["\']([^"\']+)["\'][^>]+class=["\'][^"\']*(?:thumbimage|mw-file-element)[^"\']*["\']',
+        r'<img[^>]+class=["\'][^"\']*(?:thumbimage|mw-file-element)[^"\']*["\'][^>]+src=["\']([^"\']+)["\']',
+        r'<img[^>]+src=["\']([^"\']+)["\'][^>]*>',
+    ]
+    for pattern in image_patterns:
+        match = re.search(pattern, html_text, flags=re.IGNORECASE)
+        if match:
+            image_url = absolutize_image_url(match.group(1).strip())
+            if image_url and not image_url.startswith("data:"):
+                return image_url
+
+    return ""
+
+
 def download_image(url: str, target_dir: Path) -> str:
     if not url:
         return ""
@@ -499,6 +544,13 @@ def resolve_item_image_url(item: dict[str, Any], lang: str) -> str:
     for page in item.get("pages", []):
         if page.get("thumbnail"):
             return page["thumbnail"]
+    for page in item.get("pages", []):
+        try:
+            image_url = fetch_detail_page_image(page.get("url", ""))
+        except Exception:
+            image_url = ""
+        if image_url:
+            return image_url
     for page in item.get("pages", []):
         try:
             image_url = fetch_summary_image(page.get("title", ""), lang)
@@ -587,6 +639,8 @@ def main() -> None:
         article = build_fallback_article(target_date, merged_items)
 
     cover_url, image_urls = download_assets(target_date, merged_items, args.lang)
+    if not cover_url:
+        raise RuntimeError("No usable image found after fetching detail pages and summary images.")
     content_html = render_wechat_html(article["title"], article["summary"], article["content_text"], cover_url, image_urls)
     payload = {
         "title": article["title"],

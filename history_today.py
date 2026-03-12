@@ -122,6 +122,52 @@ def make_event_key(year: Any, text: str) -> str:
     return f"{year}|{simplified}"
 
 
+def canonical_event_text(item: dict[str, Any]) -> str:
+    detail = item.get("detail") or {}
+    candidates = [
+        item.get("text", ""),
+        detail.get("title", ""),
+        detail.get("description", ""),
+        detail.get("extract", ""),
+    ]
+    for page in item.get("pages", []):
+        candidates.extend([page.get("title", ""), page.get("description", ""), page.get("extract", "")])
+    text = normalize_text(" ".join(part for part in candidates if part)).lower()
+    return "".join(ch for ch in text if ch.isalnum() or ch.isspace())
+
+
+def is_duplicate_event(candidate: dict[str, Any], existing: dict[str, Any]) -> bool:
+    if str(candidate.get("year", "")) != str(existing.get("year", "")):
+        return False
+    left = canonical_event_text(candidate)
+    right = canonical_event_text(existing)
+    if not left or not right:
+        return False
+    if left == right:
+        return True
+    short, long_ = (left, right) if len(left) <= len(right) else (right, left)
+    if len(short) >= 24 and short in long_:
+        return True
+    short_words = set(short.split())
+    long_words = set(long_.split())
+    if short_words and len(short_words) >= 4:
+        overlap = len(short_words & long_words) / len(short_words)
+        if overlap >= 0.85:
+            return True
+    return False
+
+
+def dedupe_final_items(items: list[dict[str, Any]], limit: int) -> list[dict[str, Any]]:
+    results: list[dict[str, Any]] = []
+    for item in items:
+        if any(is_duplicate_event(item, existing) for existing in results):
+            continue
+        results.append(item)
+        if len(results) >= limit:
+            break
+    return results
+
+
 def is_china_related_text(text: str) -> bool:
     lowered = normalize_text(text).lower()
     return any(pattern in lowered for pattern in CHINA_RELATED_PATTERNS)
@@ -499,9 +545,7 @@ def merge_items(source_results: list[dict[str, Any]], limit: int) -> list[dict[s
             item["image_url"] = image_url
         item["source_confidence"] = infer_confidence(item)
         results.append(item)
-        if len(results) >= limit:
-            break
-    return results
+    return dedupe_final_items(results, limit)
 
 
 def source_stats(source_results: list[dict[str, Any]], merged_items: list[dict[str, Any]]) -> dict[str, Any]:
@@ -1077,11 +1121,9 @@ def main() -> None:
     content_html = render_wechat_html(article["title"], article["summary"], article["content_text"], cover_url, image_urls)
     payload = {
         "title": article["title"],
-        "summary": article["summary"],
-        "content": content_html,
+        "seo_summary": article["summary"],
         "cover": cover_url,
-        "images": image_urls,
-        "items": merged_items,
+        "wechat_html": content_html,
     }
     json_path = save_outputs(payload, Path(args.output_dir), target_date)
     print(f"Saved JSON to {json_path}")

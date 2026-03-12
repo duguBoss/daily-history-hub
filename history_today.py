@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import base64
 import datetime as dt
 import hashlib
 import html
@@ -1092,60 +1093,99 @@ def download_image(url: str, target_dir: Path) -> str:
     return str(file_path)
 
 
-def create_placeholder_cover(target_date: dt.date, target_dir: Path) -> str:
-    file_path = target_dir / "placeholder-cover.svg"
-    if not file_path.exists():
-        svg = f"""<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="720" viewBox="0 0 1280 720">
-  <defs>
-    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
-      <stop offset="0%" stop-color="#111827" />
-      <stop offset="100%" stop-color="#6b7280" />
-    </linearGradient>
-  </defs>
-  <rect width="1280" height="720" fill="url(#bg)" />
-  <circle cx="1080" cy="140" r="110" fill="#f59e0b" fill-opacity="0.22" />
-  <circle cx="180" cy="580" r="160" fill="#f3f4f6" fill-opacity="0.10" />
-  <text x="96" y="250" fill="#f9fafb" font-family="Georgia, serif" font-size="74">History Today</text>
-  <text x="96" y="340" fill="#e5e7eb" font-family="Arial, sans-serif" font-size="34">Daily historical digest</text>
-  <text x="96" y="420" fill="#fde68a" font-family="Arial, sans-serif" font-size="40">{target_date.isoformat()}</text>
-</svg>
-"""
-        file_path.write_text(svg, encoding="utf-8")
+def build_imagen_cover_prompt(article: dict[str, Any], merged_items: list[dict[str, Any]], target_date: dt.date) -> str:
+    highlights = []
+    for item in merged_items[:3]:
+        year = item.get("year", "")
+        text = normalize_text(item.get("text", ""))
+        if text:
+            highlights.append(f"{year}: {text}")
+    highlights_text = "; ".join(highlights)
+    title = normalize_text(article.get("title", ""))
+    summary = normalize_text(article.get("summary", ""))
+    return (
+        "Create a cinematic, editorial-style historical collage cover for a daily history article. "
+        f"Date: {target_date.isoformat()}. "
+        f"Headline theme: {title}. Summary: {summary}. Key events: {highlights_text}. "
+        "Landscape 16:9 composition, dramatic lighting, archival documentary mood, realistic details, "
+        "newspaper-magazine cover feel, no text, no watermark, no logo."
+    )
+
+
+def build_imagen_event_prompt(item: dict[str, Any], target_date: dt.date) -> str:
+    detail = item.get("detail") or {}
+    title = normalize_text(detail.get("title", ""))
+    description = normalize_text(detail.get("description", ""))
+    extract = normalize_text(detail.get("extract", ""))
+    text = normalize_text(item.get("text", ""))
+    year = item.get("year", "")
+    return (
+        "Create a cinematic, realistic historical editorial illustration for a daily history article. "
+        f"Date context: {target_date.isoformat()}. Event year: {year}. "
+        f"Event: {text}. Title cue: {title}. Description: {description}. Extra context: {extract}. "
+        "Landscape 16:9 composition, documentary tone, historically evocative, realistic details, "
+        "no text, no watermark, no logo."
+    )
+
+
+def parse_imagen_bytes(payload: dict[str, Any]) -> bytes:
+    candidates = []
+    if isinstance(payload.get("predictions"), list):
+        candidates.extend(payload["predictions"])
+    if isinstance(payload.get("images"), list):
+        candidates.extend(payload["images"])
+    for candidate in candidates:
+        if not isinstance(candidate, dict):
+            continue
+        for key in ("bytesBase64Encoded", "imageBytes", "bytes_base64_encoded"):
+            value = candidate.get(key)
+            if isinstance(value, str) and value.strip():
+                return base64.b64decode(value)
+    raise RuntimeError(f"Imagen response missing image bytes: {payload}")
+
+
+def generate_imagen_image(prompt: str, file_path: Path) -> str:
+    api_key = os.environ.get("GEMINI_API_KEY")
+    if not api_key:
+        return ""
+    if file_path.exists():
+        return str(file_path)
+    response = requests.post(
+        "https://generativelanguage.googleapis.com/v1beta/models/imagen-4.0-generate-001:predict",
+        headers={"x-goog-api-key": api_key, "Content-Type": "application/json"},
+        json={
+            "instances": [{"prompt": prompt}],
+            "parameters": {
+                "sampleCount": 1,
+                "numberOfImages": 1,
+                "aspectRatio": "16:9",
+                "imageSize": "1K",
+                "personGeneration": "allow_all",
+            },
+        },
+        timeout=REQUEST_TIMEOUT * 3,
+    )
+    response.raise_for_status()
+    file_path.write_bytes(parse_imagen_bytes(response.json()))
     return str(file_path)
 
 
-def resolve_item_image_url(item: dict[str, Any], lang: str) -> str:
-    if item.get("image_url"):
-        return item["image_url"]
-    detail = item.get("detail") or {}
-    if detail.get("thumbnail"):
-        return detail["thumbnail"]
-    for page in item.get("pages", []):
-        if page.get("thumbnail"):
-            return page["thumbnail"]
-    if item.get("pages"):
-        try:
-            image_url = fetch_wikimedia_commons_image(item, lang)
-        except Exception:
-            image_url = ""
-        if image_url:
-            return image_url
-    try:
-        image_url = fetch_commons_search_image(item)
-    except Exception:
-        image_url = ""
-    if image_url:
-        return image_url
-    try:
-        image_url = fetch_openverse_image(item)
-    except Exception:
-        image_url = ""
-    if image_url:
-        return image_url
-    return ""
+def generate_imagen_cover(article: dict[str, Any], merged_items: list[dict[str, Any]], target_date: dt.date, target_dir: Path) -> str:
+    prompt = build_imagen_cover_prompt(article, merged_items, target_date)
+    return generate_imagen_image(prompt, target_dir / "imagen-cover.png")
 
 
-def download_assets(target_date: dt.date, merged_items: list[dict[str, Any]], lang: str) -> tuple[str, list[str]]:
+def generate_imagen_event_image(item: dict[str, Any], target_date: dt.date, target_dir: Path, index: int) -> str:
+    prompt = build_imagen_event_prompt(item, target_date)
+    return generate_imagen_image(prompt, target_dir / f"imagen-event-{index:02d}.png")
+
+
+def download_assets(
+    target_date: dt.date,
+    merged_items: list[dict[str, Any]],
+    lang: str,
+    article: dict[str, Any] | None = None,
+) -> tuple[str, list[str]]:
     target_dir = ASSET_ROOT / target_date.isoformat()
     target_dir.mkdir(parents=True, exist_ok=True)
 
@@ -1158,21 +1198,24 @@ def download_assets(target_date: dt.date, merged_items: list[dict[str, Any]], la
         absolute_path = local_path if local_path.is_absolute() else (Path.cwd() / local_path)
         return github_asset_url(absolute_path.relative_to(Path.cwd()))
 
-    for item in merged_items:
-        source_url = resolve_item_image_url(item, lang)
-        if not source_url or source_url in seen:
-            continue
-        seen.add(source_url)
+    if article:
         try:
-            github_url = to_github_url(download_image(source_url, target_dir))
+            cover_url = to_github_url(generate_imagen_cover(article, merged_items, target_date, target_dir))
         except Exception:
+            cover_url = ""
+
+    for index, item in enumerate(merged_items[:5], start=1):
+        try:
+            image_path = generate_imagen_event_image(item, target_date, target_dir, index)
+        except Exception:
+            image_path = ""
+        if not image_path:
             continue
-        if not cover_url:
-            cover_url = github_url
+        github_url = to_github_url(image_path)
+        if github_url in seen:
             continue
+        seen.add(github_url)
         image_urls.append(github_url)
-        if len(image_urls) >= 7:
-            break
 
     return cover_url, image_urls
 
@@ -1228,7 +1271,7 @@ def main() -> None:
     except Exception:
         article = build_fallback_article(target_date, merged_items)
 
-    cover_url, image_urls = download_assets(target_date, merged_items, args.lang)
+    cover_url, image_urls = download_assets(target_date, merged_items, args.lang, article)
     content_html = render_wechat_html(article["title"], article["summary"], article["content_text"], cover_url, image_urls)
     payload = {
         "title": article["title"],

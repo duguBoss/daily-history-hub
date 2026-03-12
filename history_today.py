@@ -17,7 +17,8 @@ REQUEST_TIMEOUT = 30
 DEFAULT_WIKIPEDIA_LANG = os.environ.get("WIKIPEDIA_LANG", "zh")
 DEFAULT_LIMIT = int(os.environ.get("HISTORY_TODAY_LIMIT", "18"))
 DEFAULT_OUTPUT_DIR = Path(os.environ.get("OUTPUT_DIR", "output"))
-DEFAULT_GEMINI_MODEL = os.environ.get("GEMINI_MODEL", "gemini-2.5-flash")
+DEFAULT_GEMINI_MODEL = "gemini-3-pro-preview"
+DEFAULT_GEMINI_FALLBACK_MODEL = "gemini-2.5-flash-lite-preview-09-2025"
 SOURCE_WIKIMEDIA = "wikimedia"
 SOURCE_DAYINHISTORY = "dayinhistory"
 SOURCE_API_NINJAS = "api_ninjas"
@@ -444,14 +445,14 @@ def build_gemini_prompt(target_date: dt.date, merged_items: list[dict[str, Any]]
     )
 
 
-def call_gemini(prompt: str) -> dict[str, Any]:
+def call_gemini_once(prompt: str, model_name: str) -> dict[str, Any]:
     api_key = os.environ.get("GEMINI_API_KEY")
     if not api_key:
         raise ValueError("Missing GEMINI_API_KEY")
 
     url = (
         "https://generativelanguage.googleapis.com/v1beta/models/"
-        f"{DEFAULT_GEMINI_MODEL}:generateContent"
+        f"{model_name}:generateContent"
     )
     response = requests.post(
         url,
@@ -495,6 +496,22 @@ def call_gemini(prompt: str) -> dict[str, Any]:
     if any(is_china_related_text(value) for value in text_fields if isinstance(value, str)):
         raise RuntimeError("Gemini output contains filtered China-related content.")
     return result
+
+
+def call_gemini(prompt: str) -> dict[str, Any]:
+    primary_model = DEFAULT_GEMINI_MODEL
+    fallback_model = DEFAULT_GEMINI_FALLBACK_MODEL
+    errors: list[str] = []
+
+    for model_name in [primary_model, fallback_model]:
+        if not model_name:
+            continue
+        try:
+            return call_gemini_once(prompt, model_name)
+        except Exception as exc:
+            errors.append(f"{model_name}: {exc}")
+
+    raise RuntimeError(" | ".join(errors))
 
 
 def build_fallback_editorial(target_date: dt.date, merged_items: list[dict[str, Any]]) -> dict[str, Any]:

@@ -1,27 +1,42 @@
-name: 📜 History Today Scraper
+name: Daily History Today
 
 on:
   schedule:
-    - cron: '30 23 * * *'
+    - cron: '10 16 * * *'
   workflow_dispatch:
 
 jobs:
   scrape:
     runs-on: ubuntu-latest
-    permissions: {contents: write}
+    permissions:
+      contents: write
+
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v4
-        with: {python-version: '3.10'}
-      - name: Install
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install dependencies
         run: |
-          pip install requests beautifulsoup4 pytz playwright
-      - name: Run Scraper
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Run scraper
         env:
           GITHUB_REPOSITORY: ${{ github.repository }}
-          GITHUB_REF_NAME: ${{ github.ref_name }}
-        run: python history_today.py
-      - name: Commit
-        uses: stefanzweifel/git-auto-commit-action@v5
-        with:
-          commit_message: "Auto-generate: 历史上的今天 📜"
+          WIKIMEDIA_CONTACT: https://github.com/${{ github.repository }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          API_NINJAS_API_KEY: ${{ secrets.API_NINJAS_API_KEY }}
+        run: python history_today.py --output-dir output
+
+      - name: Commit generated files
+        run: |
+          git config --local user.email "github-actions[bot]@users.noreply.github.com"
+          git config --local user.name "github-actions[bot]"
+          git add output
+          git diff --quiet && git diff --staged --quiet || (git commit -m "auto-generate history today" && git push)

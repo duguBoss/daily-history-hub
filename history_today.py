@@ -33,7 +33,7 @@ SOURCE_API_NINJAS = "api_ninjas"
 UNSPLASH_SEARCH_URL = "https://api.unsplash.com/search/photos"
 OPENVERSE_IMAGES_URL = "https://api.openverse.org/v1/images/"
 COMMONS_API_URL = "https://commons.wikimedia.org/w/api.php"
-HUGGINGFACE_IMAGE_API_URL = "https://api-inference.huggingface.co/models/stabilityai/stable-diffusion-3.5-large"
+HUGGINGFACE_IMAGE_API_URL = "https://router.huggingface.co/hf-inference/models/stabilityai/stable-diffusion-3.5-large"
 MONTH_NAMES = {
     1: "january",
     2: "february",

@@ -237,9 +237,22 @@ def parse_britannica_item(year: str, text_parts: list[str], image_url: str, deta
 
 def fetch_britannica(target_date: dt.date) -> dict[str, Any]:
     url = britannica_date_url(target_date)
-    headers = {"User-Agent": build_user_agent(), "Accept": "text/html,application/xhtml+xml"}
-    response = requests.get(url, headers=headers, timeout=REQUEST_TIMEOUT)
-    response.raise_for_status()
+    headers = {
+        "User-Agent": (
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+            "(KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36"
+        ),
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
+        "Accept-Language": "en-US,en;q=0.9",
+        "Cache-Control": "no-cache",
+        "Pragma": "no-cache",
+        "Referer": "https://www.britannica.com/",
+    }
+    try:
+        response = requests.get(url, headers=headers, timeout=REQUEST_TIMEOUT)
+        response.raise_for_status()
+    except Exception as exc:
+        return {"ok": False, "items": [], "endpoint": url, "error": str(exc)}
     lines = html_to_lines(response.text)
     items: list[dict[str, Any]] = []
     in_events = False
@@ -296,7 +309,7 @@ def fetch_britannica(target_date: dt.date) -> dict[str, Any]:
             if not featured_taken:
                 featured_taken = True
     flush()
-    return {"ok": bool(items), "items": items[:5], "endpoint": url}
+    return {"ok": bool(items), "items": items[:5], "endpoint": url, "error": "" if items else "No Britannica items parsed"}
 
 
 def wikimedia_candidates(lang: str, target_date: dt.date) -> list[tuple[str, dict[str, str]]]:

@@ -1270,7 +1270,7 @@ def download_assets(
     merged_items: list[dict[str, Any]],
     lang: str,
     article: dict[str, Any] | None = None,
-) -> tuple[str, list[str]]:
+) -> tuple[list[str], list[str]]:
     target_dir = ASSET_ROOT / target_date.isoformat()
     target_dir.mkdir(parents=True, exist_ok=True)
 
@@ -1289,6 +1289,7 @@ def download_assets(
                 cover_path = fetch_unsplash_or_generated_image(merged_items[0], target_date, target_dir, 0)
                 cover_url = to_github_url(cover_path) if cover_path else ""
                 if cover_url:
+                    seen.add(cover_url)
                     log(f"Cover URL: {cover_url}")
             except Exception as exc:
                 log(f"Cover image creation failed: {exc}")
@@ -1297,6 +1298,7 @@ def download_assets(
             try:
                 cover_url = to_github_url(generate_huggingface_cover(article, merged_items, target_date, target_dir))
                 if cover_url:
+                    seen.add(cover_url)
                     log(f"Cover URL: {cover_url}")
             except Exception as exc:
                 log(f"Cover generation failed: {exc}")
@@ -1318,25 +1320,49 @@ def download_assets(
         log(f"Event image URL {index}: {github_url}")
 
     log(f"Generated asset summary: cover={'yes' if cover_url else 'no'}, event_images={len(image_urls)}")
-    return cover_url, image_urls
+    all_images = ([cover_url] if cover_url else []) + image_urls
+    return all_images, image_urls
 
 
-def render_wechat_html(title: str, summary: str, content_text: str, cover_url: str, image_urls: list[str]) -> str:
+def render_wechat_html(title: str, summary: str, content_text: str, all_images: list[str]) -> str:
     paragraphs = [paragraph.strip() for paragraph in content_text.split("\n\n") if paragraph.strip()]
+    cover_url = all_images[0] if all_images else ""
+    body_images = all_images[1:] if len(all_images) > 1 else []
     parts = [
-        "<section style=\"max-width:760px;margin:0 auto;padding:24px 18px;background:#f7f3ea;color:#1f2937;\">",
-        f"<h1 style=\"font-size:30px;line-height:1.35;margin:0 0 16px 0;color:#111827;\">{title}</h1>",
-        f"<p style=\"font-size:15px;line-height:1.8;color:#4b5563;margin:0 0 20px 0;\">{summary}</p>",
+        "<section style=\"margin:0;background:linear-gradient(180deg,#f6efe4 0%,#fbf8f2 58%,#ffffff 100%);padding:28px 14px 40px;color:#1f2937;\">",
+        "<section style=\"max-width:820px;margin:0 auto;\">",
+        "<section style=\"background:rgba(255,255,255,0.82);border:1px solid rgba(148,163,184,0.18);box-shadow:0 18px 48px rgba(15,23,42,0.08);border-radius:28px;overflow:hidden;\">",
     ]
     if cover_url:
-        parts.append(f"<p style=\"margin:0 0 22px 0;\"><img src=\"{cover_url}\" style=\"width:100%;border-radius:12px;display:block;\"></p>")
+        parts.append(
+            f"<div style=\"position:relative;background:#d6d3d1;\"><img src=\"{cover_url}\" style=\"width:100%;aspect-ratio:16/9;object-fit:cover;display:block;\"></div>"
+        )
+    parts.extend(
+        [
+            "<section style=\"padding:28px 24px 18px;\">",
+            "<div style=\"display:inline-block;padding:6px 12px;border-radius:999px;background:#111827;color:#f9fafb;font-size:12px;letter-spacing:0.08em;text-transform:uppercase;\">History Today</div>",
+            f"<h1 style=\"font-size:34px;line-height:1.25;margin:16px 0 14px;color:#111827;font-family:Georgia,'Times New Roman',serif;\">{title}</h1>",
+            f"<p style=\"font-size:16px;line-height:1.9;color:#475569;margin:0 0 4px;\">{summary}</p>",
+            "</section>",
+            "<section style=\"padding:0 24px 28px;\">",
+        ]
+    )
     for index, paragraph in enumerate(paragraphs):
-        parts.append(f"<p style=\"font-size:17px;line-height:1.95;margin:0 0 18px 0;\">{paragraph}</p>")
-        if index < len(image_urls):
+        parts.append(
+            f"<div style=\"background:#fffdf8;border:1px solid rgba(226,232,240,0.9);border-radius:22px;padding:20px 18px;margin:0 0 18px;box-shadow:0 10px 24px rgba(15,23,42,0.04);\"><p style=\"font-size:17px;line-height:2;margin:0;color:#334155;\">{paragraph}</p></div>"
+        )
+        if index < len(body_images):
             parts.append(
-                f"<p style=\"margin:0 0 22px 0;\"><img src=\"{image_urls[index]}\" style=\"width:100%;border-radius:12px;display:block;\"></p>"
+                f"<div style=\"margin:0 0 22px;\"><img src=\"{body_images[index]}\" style=\"width:100%;aspect-ratio:16/9;object-fit:cover;border-radius:22px;display:block;box-shadow:0 16px 34px rgba(15,23,42,0.10);\"></div>"
             )
-    parts.append("</section>")
+    parts.extend(
+        [
+            "</section>",
+            "</section>",
+            "</section>",
+            "</section>",
+        ]
+    )
     return "".join(parts)
 
 
@@ -1377,12 +1403,12 @@ def main() -> None:
         log(f"Article generation fallback triggered: {exc}")
         article = build_fallback_article(target_date, merged_items)
 
-    cover_url, image_urls = download_assets(target_date, merged_items, args.lang, article)
-    content_html = render_wechat_html(article["title"], article["summary"], article["content_text"], cover_url, image_urls)
+    all_images, image_urls = download_assets(target_date, merged_items, args.lang, article)
+    content_html = render_wechat_html(article["title"], article["summary"], article["content_text"], all_images)
     payload = {
         "title": article["title"],
         "seo_summary": article["summary"],
-        "cover": cover_url,
+        "cover": all_images,
         "wechat_html": content_html,
     }
     json_path = save_outputs(payload, Path(args.output_dir), target_date)

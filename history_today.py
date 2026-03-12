@@ -1149,6 +1149,23 @@ def extract_gradio_event_id(payload: dict[str, Any]) -> str:
 
 
 def parse_gradio_result_text(text: str) -> str:
+    def extract_url(value: Any) -> str:
+        if isinstance(value, str) and value.strip():
+            stripped = value.strip()
+            if stripped.startswith("http://") or stripped.startswith("https://"):
+                return stripped
+            if stripped.startswith("/gradio_api/file="):
+                return stripped
+            if stripped.startswith("/tmp/gradio/"):
+                return stripped
+            return ""
+        if isinstance(value, dict):
+            for key in ("url", "path"):
+                candidate = extract_url(value.get(key))
+                if candidate:
+                    return candidate
+        return ""
+
     data_lines: list[str] = []
     for raw_line in text.splitlines():
         line = raw_line.strip()
@@ -1161,20 +1178,22 @@ def parse_gradio_result_text(text: str) -> str:
         except Exception:
             continue
         if isinstance(payload, list) and payload:
-            first = payload[0]
-            if isinstance(first, str) and first.strip():
-                return first
+            for item in payload:
+                candidate = extract_url(item)
+                if candidate:
+                    return candidate
         if isinstance(payload, dict):
-            for key in ("url", "path"):
-                value = payload.get(key)
-                if isinstance(value, str) and value.strip():
-                    return value
+            candidate = extract_url(payload)
+            if candidate:
+                return candidate
     raise RuntimeError(f"Unable to parse Gradio generation result: {text[:800]}")
 
 
 def join_hf_space_url(path_or_url: str) -> str:
     if path_or_url.startswith("http://") or path_or_url.startswith("https://"):
         return path_or_url
+    if path_or_url.startswith("/tmp/gradio/"):
+        return f"{Z_IMAGE_TURBO_BASE_URL}/gradio_api/file={path_or_url}"
     if path_or_url.startswith("/"):
         return f"{Z_IMAGE_TURBO_BASE_URL}{path_or_url}"
     return f"{Z_IMAGE_TURBO_BASE_URL}/{path_or_url}"

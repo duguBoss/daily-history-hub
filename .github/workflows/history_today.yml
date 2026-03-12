@@ -29,14 +29,24 @@ jobs:
       - name: Run scraper
         env:
           GITHUB_REPOSITORY: ${{ github.repository }}
+          GITHUB_REF_NAME: ${{ github.ref_name }}
           WIKIMEDIA_CONTACT: https://github.com/${{ github.repository }}
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           API_NINJAS_API_KEY: ${{ secrets.API_NINJAS_API_KEY }}
         run: python history_today.py --output-dir output
 
+      - name: Inspect generated files
+        run: |
+          echo "Generated output files:"
+          find output -maxdepth 2 -type f | sort || true
+          echo "Generated asset files:"
+          find assets/generated -maxdepth 4 -type f | sort || true
+          echo "Git status before commit:"
+          git status --short
+
       - name: Commit generated files
         run: |
           git config --local user.email "github-actions[bot]@users.noreply.github.com"
           git config --local user.name "github-actions[bot]"
-          git add output
+          git add output assets/generated
           git diff --quiet && git diff --staged --quiet || (git commit -m "auto-generate history today" && git push)

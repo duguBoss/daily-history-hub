@@ -119,6 +119,10 @@ def normalize_text(text: str) -> str:
     return " ".join((text or "").replace("\n", " ").split())
 
 
+def log(message: str) -> None:
+    print(f"[history_today] {message}")
+
+
 def make_event_key(year: Any, text: str) -> str:
     lowered = normalize_text(text).lower()
     simplified = "".join(ch for ch in lowered if ch.isalnum() or ch.isspace())
@@ -1147,9 +1151,13 @@ def parse_imagen_bytes(payload: dict[str, Any]) -> bytes:
 def generate_imagen_image(prompt: str, file_path: Path) -> str:
     api_key = os.environ.get("GEMINI_API_KEY")
     if not api_key:
+        log(f"Skip image generation for {file_path.name}: GEMINI_API_KEY is missing")
         return ""
     if file_path.exists():
+        log(f"Reuse existing generated image: {file_path}")
         return str(file_path)
+    log(f"Generating image: {file_path.name}")
+    log(f"Imagen prompt: {prompt[:240]}")
     response = requests.post(
         "https://generativelanguage.googleapis.com/v1beta/models/imagen-4.0-generate-001:predict",
         headers={"x-goog-api-key": api_key, "Content-Type": "application/json"},
@@ -1165,8 +1173,13 @@ def generate_imagen_image(prompt: str, file_path: Path) -> str:
         },
         timeout=REQUEST_TIMEOUT * 3,
     )
-    response.raise_for_status()
-    file_path.write_bytes(parse_imagen_bytes(response.json()))
+    if not response.ok:
+        body_preview = response.text[:600].replace("\n", " ")
+        log(f"Imagen request failed for {file_path.name}: HTTP {response.status_code} {body_preview}")
+        response.raise_for_status()
+    payload = response.json()
+    file_path.write_bytes(parse_imagen_bytes(payload))
+    log(f"Saved generated image: {file_path}")
     return str(file_path)
 
 
@@ -1201,13 +1214,17 @@ def download_assets(
     if article:
         try:
             cover_url = to_github_url(generate_imagen_cover(article, merged_items, target_date, target_dir))
-        except Exception:
+            if cover_url:
+                log(f"Cover URL: {cover_url}")
+        except Exception as exc:
+            log(f"Cover generation failed: {exc}")
             cover_url = ""
 
     for index, item in enumerate(merged_items[:5], start=1):
         try:
             image_path = generate_imagen_event_image(item, target_date, target_dir, index)
-        except Exception:
+        except Exception as exc:
+            log(f"Event image generation failed for item {index} ({item.get('year')} {item.get('text', '')[:80]}): {exc}")
             image_path = ""
         if not image_path:
             continue
@@ -1216,7 +1233,9 @@ def download_assets(
             continue
         seen.add(github_url)
         image_urls.append(github_url)
+        log(f"Event image URL {index}: {github_url}")
 
+    log(f"Generated asset summary: cover={'yes' if cover_url else 'no'}, event_images={len(image_urls)}")
     return cover_url, image_urls
 
 
@@ -1250,6 +1269,7 @@ def save_outputs(payload: dict[str, Any], output_dir: Path, target_date: dt.date
 def main() -> None:
     args = parse_args()
     target_date = resolve_target_date(args.date, args.month, args.day)
+    log(f"Start run for date {target_date.isoformat()}")
     cleanup_old_assets(target_date, ASSET_ROOT, keep_days=7)
 
     source_results = [
@@ -1262,13 +1282,17 @@ def main() -> None:
     if not merged_items:
         errors = [f"{item['name']}: {item.get('error', '')}" for item in source_results]
         raise RuntimeError(f"No merged items available. {' | '.join(errors)}")
+    log(f"Merged unique items: {len(merged_items)}")
 
     enrich_item_details(merged_items, args.lang)
     stats = source_stats(source_results, merged_items)
+    log(f"Source stats: {json.dumps(stats, ensure_ascii=False)}")
     prompt = build_gemini_prompt(target_date, merged_items, stats)
     try:
         article = call_gemini(prompt)
-    except Exception:
+        log("Article generation: Gemini success")
+    except Exception as exc:
+        log(f"Article generation fallback triggered: {exc}")
         article = build_fallback_article(target_date, merged_items)
 
     cover_url, image_urls = download_assets(target_date, merged_items, args.lang, article)
@@ -1280,7 +1304,7 @@ def main() -> None:
         "wechat_html": content_html,
     }
     json_path = save_outputs(payload, Path(args.output_dir), target_date)
-    print(f"Saved JSON to {json_path}")
+    log(f"Saved JSON to {json_path}")
 
 
 if __name__ == "__main__":

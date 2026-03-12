@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import argparse
-import base64
 import datetime as dt
 import hashlib
 import html
@@ -34,6 +33,7 @@ SOURCE_API_NINJAS = "api_ninjas"
 UNSPLASH_SEARCH_URL = "https://api.unsplash.com/search/photos"
 OPENVERSE_IMAGES_URL = "https://api.openverse.org/v1/images/"
 COMMONS_API_URL = "https://commons.wikimedia.org/w/api.php"
+HUGGINGFACE_IMAGE_API_URL = "https://api-inference.huggingface.co/models/stabilityai/stable-diffusion-3.5-large"
 MONTH_NAMES = {
     1: "january",
     2: "february",
@@ -1097,7 +1097,7 @@ def download_image(url: str, target_dir: Path) -> str:
     return str(file_path)
 
 
-def build_imagen_cover_prompt(article: dict[str, Any], merged_items: list[dict[str, Any]], target_date: dt.date) -> str:
+def build_generated_cover_prompt(article: dict[str, Any], merged_items: list[dict[str, Any]], target_date: dt.date) -> str:
     highlights = []
     for item in merged_items[:3]:
         year = item.get("year", "")
@@ -1116,7 +1116,7 @@ def build_imagen_cover_prompt(article: dict[str, Any], merged_items: list[dict[s
     )
 
 
-def build_imagen_event_prompt(item: dict[str, Any], target_date: dt.date) -> str:
+def build_generated_event_prompt(item: dict[str, Any], target_date: dt.date) -> str:
     detail = item.get("detail") or {}
     title = normalize_text(detail.get("title", ""))
     description = normalize_text(detail.get("description", ""))
@@ -1132,65 +1132,63 @@ def build_imagen_event_prompt(item: dict[str, Any], target_date: dt.date) -> str
     )
 
 
-def parse_imagen_bytes(payload: dict[str, Any]) -> bytes:
-    candidates = []
-    if isinstance(payload.get("predictions"), list):
-        candidates.extend(payload["predictions"])
-    if isinstance(payload.get("images"), list):
-        candidates.extend(payload["images"])
-    for candidate in candidates:
-        if not isinstance(candidate, dict):
-            continue
-        for key in ("bytesBase64Encoded", "imageBytes", "bytes_base64_encoded"):
-            value = candidate.get(key)
-            if isinstance(value, str) and value.strip():
-                return base64.b64decode(value)
-    raise RuntimeError(f"Imagen response missing image bytes: {payload}")
-
-
-def generate_imagen_image(prompt: str, file_path: Path) -> str:
-    api_key = os.environ.get("GEMINI_API_KEY")
+def generate_huggingface_image(prompt: str, file_path: Path) -> str:
+    api_key = os.environ.get("HF_API_TOKEN")
     if not api_key:
-        log(f"Skip image generation for {file_path.name}: GEMINI_API_KEY is missing")
+        log(f"Skip image generation for {file_path.name}: HF_API_TOKEN is missing")
         return ""
     if file_path.exists():
         log(f"Reuse existing generated image: {file_path}")
         return str(file_path)
     log(f"Generating image: {file_path.name}")
-    log(f"Imagen prompt: {prompt[:240]}")
+    log(f"Hugging Face prompt: {prompt[:240]}")
     response = requests.post(
-        "https://generativelanguage.googleapis.com/v1beta/models/imagen-4.0-generate-001:predict",
-        headers={"x-goog-api-key": api_key, "Content-Type": "application/json"},
+        HUGGINGFACE_IMAGE_API_URL,
+        headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
         json={
-            "instances": [{"prompt": prompt}],
-            "parameters": {
-                "sampleCount": 1,
-                "numberOfImages": 1,
-                "aspectRatio": "16:9",
-                "imageSize": "1K",
-                "personGeneration": "allow_all",
-            },
+            "inputs": f"{prompt} Wide cinematic 16:9 composition.",
+            "parameters": {"width": 1344, "height": 768},
         },
-        timeout=REQUEST_TIMEOUT * 3,
+        timeout=REQUEST_TIMEOUT * 6,
     )
     if not response.ok:
         body_preview = response.text[:600].replace("\n", " ")
-        log(f"Imagen request failed for {file_path.name}: HTTP {response.status_code} {body_preview}")
+        log(f"Hugging Face request failed for {file_path.name}: HTTP {response.status_code} {body_preview}")
         response.raise_for_status()
-    payload = response.json()
-    file_path.write_bytes(parse_imagen_bytes(payload))
+    content_type = (response.headers.get("content-type") or "").lower()
+    if "application/json" in content_type:
+        body_preview = response.text[:600].replace("\n", " ")
+        raise RuntimeError(f"Hugging Face returned JSON instead of image for {file_path.name}: {body_preview}")
+    file_path.write_bytes(response.content)
     log(f"Saved generated image: {file_path}")
     return str(file_path)
 
 
-def generate_imagen_cover(article: dict[str, Any], merged_items: list[dict[str, Any]], target_date: dt.date, target_dir: Path) -> str:
-    prompt = build_imagen_cover_prompt(article, merged_items, target_date)
-    return generate_imagen_image(prompt, target_dir / "imagen-cover.png")
+def generate_huggingface_cover(article: dict[str, Any], merged_items: list[dict[str, Any]], target_date: dt.date, target_dir: Path) -> str:
+    prompt = build_generated_cover_prompt(article, merged_items, target_date)
+    return generate_huggingface_image(prompt, target_dir / "hf-cover.png")
 
 
-def generate_imagen_event_image(item: dict[str, Any], target_date: dt.date, target_dir: Path, index: int) -> str:
-    prompt = build_imagen_event_prompt(item, target_date)
-    return generate_imagen_image(prompt, target_dir / f"imagen-event-{index:02d}.png")
+def generate_huggingface_event_image(item: dict[str, Any], target_date: dt.date, target_dir: Path, index: int) -> str:
+    prompt = build_generated_event_prompt(item, target_date)
+    return generate_huggingface_image(prompt, target_dir / f"hf-event-{index:02d}.png")
+
+
+def fetch_unsplash_or_generated_image(
+    item: dict[str, Any],
+    target_date: dt.date,
+    target_dir: Path,
+    index: int,
+) -> str:
+    try:
+        unsplash_url = fetch_unsplash_image(item)
+    except Exception as exc:
+        log(f"Unsplash lookup failed for item {index}: {exc}")
+        unsplash_url = ""
+    if unsplash_url:
+        log(f"Unsplash image found for item {index}: {unsplash_url}")
+        return download_image(unsplash_url, target_dir)
+    return generate_huggingface_event_image(item, target_date, target_dir, index)
 
 
 def download_assets(
@@ -1212,17 +1210,27 @@ def download_assets(
         return github_asset_url(absolute_path.relative_to(Path.cwd()))
 
     if article:
-        try:
-            cover_url = to_github_url(generate_imagen_cover(article, merged_items, target_date, target_dir))
-            if cover_url:
-                log(f"Cover URL: {cover_url}")
-        except Exception as exc:
-            log(f"Cover generation failed: {exc}")
-            cover_url = ""
+        if merged_items:
+            try:
+                cover_path = fetch_unsplash_or_generated_image(merged_items[0], target_date, target_dir, 0)
+                cover_url = to_github_url(cover_path) if cover_path else ""
+                if cover_url:
+                    log(f"Cover URL: {cover_url}")
+            except Exception as exc:
+                log(f"Cover image creation failed: {exc}")
+                cover_url = ""
+        if not cover_url:
+            try:
+                cover_url = to_github_url(generate_huggingface_cover(article, merged_items, target_date, target_dir))
+                if cover_url:
+                    log(f"Cover URL: {cover_url}")
+            except Exception as exc:
+                log(f"Cover generation failed: {exc}")
+                cover_url = ""
 
     for index, item in enumerate(merged_items[:5], start=1):
         try:
-            image_path = generate_imagen_event_image(item, target_date, target_dir, index)
+            image_path = fetch_unsplash_or_generated_image(item, target_date, target_dir, index)
         except Exception as exc:
             log(f"Event image generation failed for item {index} ({item.get('year')} {item.get('text', '')[:80]}): {exc}")
             image_path = ""

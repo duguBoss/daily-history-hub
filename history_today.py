@@ -21,7 +21,7 @@ import requests
 SHANGHAI_TZ = pytz.timezone("Asia/Shanghai")
 REQUEST_TIMEOUT = 30
 DEFAULT_WIKIPEDIA_LANG = os.environ.get("WIKIPEDIA_LANG", "zh")
-DEFAULT_LIMIT = int(os.environ.get("HISTORY_TODAY_LIMIT", "5"))
+DEFAULT_LIMIT = int(os.environ.get("HISTORY_TODAY_LIMIT", "8"))
 DEFAULT_OUTPUT_DIR = Path(os.environ.get("OUTPUT_DIR", "output"))
 ASSET_ROOT = Path("assets") / "generated" / "history_today"
 PRIMARY_GEMINI_MODEL = "gemini-3.1-pro-preview"
@@ -51,6 +51,30 @@ MONTH_NAMES = {
 CHINA_RELATED_PATTERNS = [
     "china",
     "chinese",
+    "中国",
+    "中华人民共和国",
+    "中华民国",
+    "中共",
+    "中国共产党",
+    "北京",
+    "上海",
+    "广州",
+    "深圳",
+    "武汉",
+    "香港",
+    "澳门",
+    "台湾",
+    "台北",
+    "西藏",
+    "新疆",
+    "内蒙古",
+    "满洲",
+    "清朝",
+    "明朝",
+    "元朝",
+    "汉朝",
+    "唐朝",
+    "宋朝",
     "people's republic of china",
     "republic of china",
     "prc",
@@ -78,6 +102,13 @@ CHINA_RELATED_PATTERNS = [
     "xinjiang",
     "inner mongolia",
     "manchuria",
+    "uyghur",
+    "uygur",
+    "tiananmen",
+    "south china sea",
+    "pla",
+    "kuomintang",
+    "nationalist china",
     "qing dynasty",
     "ming dynasty",
     "yuan dynasty",
@@ -1329,9 +1360,9 @@ def render_wechat_html(title: str, summary: str, content_text: str, all_images: 
     cover_url = all_images[0] if all_images else ""
     body_images = all_images[1:] if len(all_images) > 1 else []
     parts = [
-        "<section style=\"margin:0;background:linear-gradient(180deg,#f6efe4 0%,#fbf8f2 58%,#ffffff 100%);padding:28px 14px 40px;color:#1f2937;\">",
-        "<section style=\"max-width:820px;margin:0 auto;\">",
-        "<section style=\"background:rgba(255,255,255,0.82);border:1px solid rgba(148,163,184,0.18);box-shadow:0 18px 48px rgba(15,23,42,0.08);border-radius:28px;overflow:hidden;\">",
+        "<section style=\"margin:0;background:linear-gradient(180deg,#f6efe4 0%,#fbf8f2 58%,#ffffff 100%);padding:1px;color:#1f2937;\">",
+        "<section style=\"width:100%;margin:0;\">",
+        "<section style=\"background:rgba(255,255,255,0.92);border:1px solid rgba(148,163,184,0.16);box-shadow:0 12px 28px rgba(15,23,42,0.06);border-radius:18px;overflow:hidden;\">",
     ]
     if cover_url:
         parts.append(
@@ -1339,21 +1370,21 @@ def render_wechat_html(title: str, summary: str, content_text: str, all_images: 
         )
     parts.extend(
         [
-            "<section style=\"padding:28px 24px 18px;\">",
-            "<div style=\"display:inline-block;padding:6px 12px;border-radius:999px;background:#111827;color:#f9fafb;font-size:12px;letter-spacing:0.08em;text-transform:uppercase;\">History Today</div>",
-            f"<h1 style=\"font-size:34px;line-height:1.25;margin:16px 0 14px;color:#111827;font-family:Georgia,'Times New Roman',serif;\">{title}</h1>",
-            f"<p style=\"font-size:16px;line-height:1.9;color:#475569;margin:0 0 4px;\">{summary}</p>",
+            "<section style=\"padding:16px 12px 10px;\">",
+            "<div style=\"display:inline-block;padding:4px 10px;border-radius:999px;background:#111827;color:#f9fafb;font-size:11px;letter-spacing:0.08em;text-transform:uppercase;\">History Today</div>",
+            f"<h1 style=\"font-size:29px;line-height:1.22;margin:12px 0 10px;color:#111827;font-family:Georgia,'Times New Roman',serif;\">{title}</h1>",
+            f"<p style=\"font-size:15px;line-height:1.8;color:#475569;margin:0;\">{summary}</p>",
             "</section>",
-            "<section style=\"padding:0 24px 28px;\">",
+            "<section style=\"padding:0 10px 12px;\">",
         ]
     )
     for index, paragraph in enumerate(paragraphs):
         parts.append(
-            f"<div style=\"background:#fffdf8;border:1px solid rgba(226,232,240,0.9);border-radius:22px;padding:20px 18px;margin:0 0 18px;box-shadow:0 10px 24px rgba(15,23,42,0.04);\"><p style=\"font-size:17px;line-height:2;margin:0;color:#334155;\">{paragraph}</p></div>"
+            f"<div style=\"background:#fffdf8;border:1px solid rgba(226,232,240,0.88);border-radius:16px;padding:14px 12px;margin:0 0 12px;box-shadow:0 6px 16px rgba(15,23,42,0.035);\"><p style=\"font-size:16px;line-height:1.92;margin:0;color:#334155;\">{paragraph}</p></div>"
         )
         if index < len(body_images):
             parts.append(
-                f"<div style=\"margin:0 0 22px;\"><img src=\"{body_images[index]}\" style=\"width:100%;aspect-ratio:16/9;object-fit:cover;border-radius:22px;display:block;box-shadow:0 16px 34px rgba(15,23,42,0.10);\"></div>"
+                f"<div style=\"margin:0 0 14px;\"><img src=\"{body_images[index]}\" style=\"width:100%;aspect-ratio:16/9;object-fit:cover;border-radius:16px;display:block;box-shadow:0 10px 24px rgba(15,23,42,0.08);\"></div>"
             )
     parts.extend(
         [

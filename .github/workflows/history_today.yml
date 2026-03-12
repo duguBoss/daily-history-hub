@@ -2,15 +2,14 @@ name: 📜 History Today Scraper
 
 on:
   schedule:
-    # 每天早上 7:30 (北京时间) 运行。GitHub Action 的 Cron 用的是 UTC 时间，所以减去 8 小时就是 23:30
     - cron: '30 23 * * *'
-  workflow_dispatch: # 允许你在网页端手动点击按钮运行测试
+  workflow_dispatch:
 
 jobs:
   scrape-history:
     runs-on: ubuntu-latest
     permissions:
-      contents: write # 赋予写入仓库的权限，否则无法自动提交图片
+      contents: write # 必须确保有写入权限
     
     steps:
       - name: Checkout repository
@@ -23,7 +22,8 @@ jobs:
 
       - name: Install dependencies
         run: |
-          pip install -r requirements.txt
+          python -m pip install --upgrade pip
+          pip install requests beautifulsoup4 pytz
 
       - name: Run History Scraper
         env:
@@ -35,4 +35,4 @@ jobs:
         uses: stefanzweifel/git-auto-commit-action@v5
         with:
           commit_message: "Auto-generate: 历史上的今天 📜"
-          file_pattern: 'assets/history/* *.json'
+          # 【修改点】去掉了 file_pattern，默认会把本次脚本运行产生的所有新文件（JSON和图片）全部安全提交

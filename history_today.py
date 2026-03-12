@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import datetime as dt
+import html
 import json
 import os
 from collections import Counter
@@ -17,8 +18,8 @@ REQUEST_TIMEOUT = 30
 DEFAULT_WIKIPEDIA_LANG = os.environ.get("WIKIPEDIA_LANG", "zh")
 DEFAULT_LIMIT = int(os.environ.get("HISTORY_TODAY_LIMIT", "18"))
 DEFAULT_OUTPUT_DIR = Path(os.environ.get("OUTPUT_DIR", "output"))
-DEFAULT_GEMINI_MODEL = "gemini-3-pro-preview"
-DEFAULT_GEMINI_FALLBACK_MODEL = "gemini-2.5-flash-lite-preview-09-2025"
+PRIMARY_GEMINI_MODEL = "gemini-3.1-pro-preview"
+FALLBACK_GEMINI_MODEL = "gemini-3.1-flash-lite-preview"
 SOURCE_WIKIMEDIA = "wikimedia"
 SOURCE_DAYINHISTORY = "dayinhistory"
 SOURCE_API_NINJAS = "api_ninjas"
@@ -72,22 +73,6 @@ CHINA_RELATED_PATTERNS = [
     "han dynasty",
     "tang dynasty",
     "song dynasty",
-    "中国",
-    "中华人民共和国",
-    "中共",
-    "中国共产党",
-    "中華人民共和國",
-    "中華民國",
-    "北京",
-    "上海",
-    "香港",
-    "澳门",
-    "澳門",
-    "台湾",
-    "台灣",
-    "台北",
-    "西藏",
-    "新疆",
 ]
 
 
@@ -98,7 +83,7 @@ def build_user_agent() -> str:
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Aggregate on-this-day data and produce a daily brief.")
+    parser = argparse.ArgumentParser(description="Aggregate on-this-day data and produce a WeChat article.")
     parser.add_argument("--date", help="Target date in YYYY-MM-DD format.")
     parser.add_argument("--month", type=int, help="Target month, used with --day.")
     parser.add_argument("--day", type=int, help="Target day, used with --month.")
@@ -108,11 +93,7 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def resolve_target_date(
-    date_arg: str | None,
-    month_arg: int | None,
-    day_arg: int | None,
-) -> dt.date:
+def resolve_target_date(date_arg: str | None, month_arg: int | None, day_arg: int | None) -> dt.date:
     today = dt.datetime.now(SHANGHAI_TZ).date()
     if date_arg:
         return dt.date.fromisoformat(date_arg)
@@ -178,21 +159,10 @@ def wikimedia_candidates(lang: str, target_date: dt.date) -> list[tuple[str, dic
     token = os.environ.get("WIKIMEDIA_TOKEN")
     if token:
         headers["Authorization"] = f"Bearer {token}"
-        return [
-            (
-                f"https://api.wikimedia.org/feed/v1/wikipedia/{lang}/onthisday/all/{month}/{day}",
-                headers,
-            )
-        ]
+        return [(f"https://api.wikimedia.org/feed/v1/wikipedia/{lang}/onthisday/all/{month}/{day}", headers)]
     return [
-        (
-            f"https://{lang}.wikipedia.org/api/rest_v1/feed/onthisday/all/{month}/{day}",
-            headers,
-        ),
-        (
-            f"https://api.wikimedia.org/feed/v1/wikipedia/{lang}/onthisday/all/{month}/{day}",
-            headers,
-        ),
+        (f"https://{lang}.wikipedia.org/api/rest_v1/feed/onthisday/all/{month}/{day}", headers),
+        (f"https://api.wikimedia.org/feed/v1/wikipedia/{lang}/onthisday/all/{month}/{day}", headers),
     ]
 
 
@@ -217,8 +187,7 @@ def fetch_wikimedia(lang: str, target_date: dt.date) -> dict[str, Any]:
                             "pages": [page for page in pages if page["title"] or page["url"]],
                         }
                     )
-            filtered_items = [item for item in items if not is_china_related_item(item)]
-            return {"ok": True, "items": filtered_items, "endpoint": url}
+            return {"ok": True, "items": [item for item in items if not is_china_related_item(item)], "endpoint": url}
         except Exception as exc:
             last_error = exc
     return {"ok": False, "items": [], "endpoint": "", "error": str(last_error) if last_error else "unknown"}
@@ -226,58 +195,46 @@ def fetch_wikimedia(lang: str, target_date: dt.date) -> dict[str, Any]:
 
 def fetch_dayinhistory(target_date: dt.date) -> dict[str, Any]:
     month_name = MONTH_NAMES[target_date.month]
-    auth = os.environ.get("DAYINHISTORY_API_KEY")
     headers = {"Accept": "application/json", "User-Agent": build_user_agent()}
-    if auth:
-        headers["Authorization"] = f"Bearer {auth}"
-
     items: list[dict[str, Any]] = []
     failures: list[str] = []
-    api_bases = ["https://api.dayinhistory.com/v1", "https://api.dayinhistory.dev/v1"]
-    categories = ("events", "births", "deaths")
-    for category in categories:
-        for base_url in api_bases:
+    for category in ("events", "births", "deaths"):
+        for base_url in ("https://api.dayinhistory.com/v1", "https://api.dayinhistory.dev/v1"):
             url = f"{base_url}/{category}/{month_name}/{target_date.day}/"
             try:
                 response = requests.get(url, headers=headers, timeout=REQUEST_TIMEOUT)
                 response.raise_for_status()
                 payload = response.json()
-                results = []
-                if isinstance(payload, list):
-                    results = payload
-                elif isinstance(payload, dict):
+                results = payload if isinstance(payload, list) else []
+                if isinstance(payload, dict):
                     for key in ("data", "results", "events", "births", "deaths"):
                         if isinstance(payload.get(key), list):
                             results = payload[key]
                             break
                 for entry in results:
-                    text = normalize_text(
-                        entry.get("event")
-                        or entry.get("description")
-                        or entry.get("content")
-                        or entry.get("text")
-                        or entry.get("title")
-                        or ""
-                    )
-                    year = entry.get("year") or entry.get("date") or entry.get("birth_year") or entry.get("death_year")
-                    items.append(
-                        {
-                            "source": SOURCE_DAYINHISTORY,
-                            "category": category,
-                            "year": year,
-                            "text": text,
-                            "source_url": url,
-                            "pages": [],
-                        }
-                    )
+                    item = {
+                        "source": SOURCE_DAYINHISTORY,
+                        "category": category,
+                        "year": entry.get("year") or entry.get("date") or entry.get("birth_year") or entry.get("death_year"),
+                        "text": normalize_text(
+                            entry.get("event")
+                            or entry.get("description")
+                            or entry.get("content")
+                            or entry.get("text")
+                            or entry.get("title")
+                            or ""
+                        ),
+                        "source_url": url,
+                        "pages": [],
+                    }
+                    if item["text"] and not is_china_related_item(item):
+                        items.append(item)
                 break
             except Exception as exc:
                 failures.append(f"{category} via {base_url}: {exc}")
-
-    filtered_items = [item for item in items if item["text"] and not is_china_related_item(item)]
     return {
-        "ok": bool(filtered_items),
-        "items": filtered_items,
+        "ok": bool(items),
+        "items": items,
         "endpoint": "https://api.dayinhistory.com/v1/ or https://api.dayinhistory.dev/v1/",
         "error": "; ".join(failures),
     }
@@ -287,7 +244,6 @@ def fetch_api_ninjas(target_date: dt.date) -> dict[str, Any]:
     api_key = os.environ.get("API_NINJAS_API_KEY")
     if not api_key:
         return {"ok": False, "items": [], "endpoint": "", "error": "Missing API_NINJAS_API_KEY"}
-
     url = f"https://api.api-ninjas.com/v1/historicalevents?month={target_date.month}&day={target_date.day}"
     response = requests.get(
         url,
@@ -295,9 +251,9 @@ def fetch_api_ninjas(target_date: dt.date) -> dict[str, Any]:
         timeout=REQUEST_TIMEOUT,
     )
     response.raise_for_status()
-    payload = response.json()
-    items = [
-        {
+    items = []
+    for entry in response.json():
+        item = {
             "source": SOURCE_API_NINJAS,
             "category": "events",
             "year": entry.get("year"),
@@ -305,25 +261,22 @@ def fetch_api_ninjas(target_date: dt.date) -> dict[str, Any]:
             "source_url": url,
             "pages": [],
         }
-        for entry in payload
-        if normalize_text(entry.get("event", ""))
-    ]
-    filtered_items = [item for item in items if not is_china_related_item(item)]
-    return {"ok": True, "items": filtered_items, "endpoint": url}
+        if item["text"] and not is_china_related_item(item):
+            items.append(item)
+    return {"ok": True, "items": items, "endpoint": url}
 
 
 def infer_confidence(item: dict[str, Any]) -> str:
-    source_count = len(item["sources"])
-    if source_count >= 3:
+    count = len(item["sources"])
+    if count >= 3:
         return "high"
-    if source_count == 2:
+    if count == 2:
         return "medium"
     return "low"
 
 
 def merge_items(source_results: list[dict[str, Any]], limit: int) -> list[dict[str, Any]]:
     merged: dict[str, dict[str, Any]] = {}
-
     for result in source_results:
         for item in result["items"]:
             if is_china_related_item(item):
@@ -340,7 +293,6 @@ def merge_items(source_results: list[dict[str, Any]], limit: int) -> list[dict[s
                     "pages": item.get("pages", []),
                 }
                 continue
-
             if item.get("category") and item["category"] not in current["categories"]:
                 current["categories"].append(item["category"])
             if item.get("source") and item["source"] not in current["sources"]:
@@ -350,21 +302,18 @@ def merge_items(source_results: list[dict[str, Any]], limit: int) -> list[dict[s
             if not current["pages"] and item.get("pages"):
                 current["pages"] = item["pages"]
 
-    ordered = sorted(
-        merged.values(),
-        key=lambda item: (-len(item["sources"]), str(item.get("year") or ""), item["text"]),
-    )
-    results: list[dict[str, Any]] = []
+    ordered = sorted(merged.values(), key=lambda item: (-len(item["sources"]), str(item.get("year") or ""), item["text"]))
+    results = []
     for item in ordered:
         if is_china_related_item(item):
             continue
-        item["source_confidence"] = infer_confidence(item)
         image_url = ""
         for page in item.get("pages", []):
             if page.get("thumbnail"):
                 image_url = page["thumbnail"]
                 break
         item["image_url"] = image_url
+        item["source_confidence"] = infer_confidence(item)
         results.append(item)
         if len(results) >= limit:
             break
@@ -374,21 +323,14 @@ def merge_items(source_results: list[dict[str, Any]], limit: int) -> list[dict[s
 def source_stats(source_results: list[dict[str, Any]], merged_items: list[dict[str, Any]]) -> dict[str, Any]:
     per_source = {}
     for result in source_results:
-        endpoint = result.get("endpoint", "")
-        items = result.get("items", [])
-        per_source[result.get("name", endpoint or "unknown")] = {
+        per_source[result["name"]] = {
             "ok": result.get("ok", False),
-            "item_count": len(items),
-            "endpoint": endpoint,
+            "item_count": len(result.get("items", [])),
+            "endpoint": result.get("endpoint", ""),
             "error": result.get("error", ""),
         }
-
     agreement = Counter(len(item["sources"]) for item in merged_items)
-    return {
-        "sources": per_source,
-        "merged_count": len(merged_items),
-        "agreement_breakdown": dict(sorted(agreement.items())),
-    }
+    return {"sources": per_source, "merged_count": len(merged_items), "agreement_breakdown": dict(sorted(agreement.items()))}
 
 
 def select_cover_image(merged_items: list[dict[str, Any]]) -> str:
@@ -405,67 +347,66 @@ def build_gemini_prompt(target_date: dt.date, merged_items: list[dict[str, Any]]
             "text": item["text"],
             "categories": item["categories"],
             "sources": item["sources"],
+            "source_confidence": item["source_confidence"],
             "page_title": item["pages"][0]["title"] if item["pages"] else "",
             "page_url": item["pages"][0]["url"] if item["pages"] else "",
             "image_url": item.get("image_url", ""),
-            "source_confidence": item.get("source_confidence", "low"),
         }
         for item in merged_items
     ]
-
     return (
-        "You are a meticulous history editor and viral social copywriter. "
-        "Use only the facts provided in the JSON payload. Do not invent details, dates, or names. "
-        "Produce Simplified Chinese output. "
-        "Exclude anything related to China, the Chinese Communist Party, PRC, ROC, Hong Kong, Macau, Taiwan, Tibet, Xinjiang, or Chinese dynasties. "
-        "If an item is even potentially related to those topics, do not include it.\n\n"
+        "You are writing a finished WeChat article in Simplified Chinese.\n"
+        "Use only the facts in the JSON payload. Do not invent details.\n"
+        "Exclude anything related to China, CCP, PRC, ROC, Hong Kong, Macau, Taiwan, Tibet, Xinjiang, or Chinese dynasties.\n"
+        "Write in a click-enticing style, but remain factual.\n"
         "Return valid JSON only with this schema:\n"
         "{\n"
-        '  "headline": "a punchy click-enticing Chinese title under 22 chars",\n'
-        '  "summary": "80-140 Chinese characters, vivid and curiosity-driven but factual",\n'
-        '  "selection_notes": ["note1", "note2"],\n'
+        '  "title": "click-enticing Chinese title under 22 chars",\n'
+        '  "summary": "90-140 Chinese characters summary",\n'
+        '  "cover_caption": "short Chinese caption for cover image",\n'
+        '  "full_content": "complete Chinese article body with multiple paragraphs separated by \\n\\n",\n'
+        '  "wechat_html": "complete HTML article body only, suitable for wechat rich text",\n'
         '  "highlights": [\n'
         "    {\n"
         '      "year": "string",\n'
-        '      "title": "short click-enticing Chinese subtitle",\n'
-        '      "story": "2-3 Chinese sentences based strictly on the source facts",\n'
-        '      "source_confidence": "high|medium|low",\n'
-        '      "source_basis": "brief Chinese note explaining agreement between sources"\n'
+        '      "title": "short Chinese subtitle",\n'
+        '      "summary": "1-2 Chinese sentences",\n'
+        '      "source_confidence": "high|medium|low"\n'
         "    }\n"
-        "  ],\n"
-        '  "births_digest": ["..."],\n'
-        '  "deaths_digest": ["..."],\n'
-        '  "holidays_digest": ["..."]\n'
-        "}\n\n"
-        "Headline and summary should feel compelling, with strong curiosity hooks, but must remain factual.\n"
-        "Never mention China-related content in any field.\n"
+        "  ]\n"
+        "}\n"
+        "The HTML must include h2/p tags, and can include img tags only for image URLs present in the payload.\n"
+        "Do not mention filtering or China policy.\n"
         f"Target date: {target_date.isoformat()}\n"
         f"Source stats: {json.dumps(stats, ensure_ascii=False)}\n"
         f"Merged items: {json.dumps(compact_items, ensure_ascii=False)}"
     )
 
 
+def validate_gemini_result(result: dict[str, Any]) -> dict[str, Any]:
+    required = ["title", "summary", "full_content", "wechat_html", "highlights"]
+    for key in required:
+        if key not in result or not result[key]:
+            raise RuntimeError(f"Gemini output missing {key}")
+    text_fields = [result.get("title", ""), result.get("summary", ""), result.get("cover_caption", ""), result.get("full_content", ""), result.get("wechat_html", "")]
+    for item in result.get("highlights", []):
+        text_fields.extend([item.get("year", ""), item.get("title", ""), item.get("summary", ""), item.get("source_confidence", "")])
+    if any(is_china_related_text(value) for value in text_fields if isinstance(value, str)):
+        raise RuntimeError("Gemini output contains filtered content.")
+    return result
+
+
 def call_gemini_once(prompt: str, model_name: str) -> dict[str, Any]:
     api_key = os.environ.get("GEMINI_API_KEY")
     if not api_key:
         raise ValueError("Missing GEMINI_API_KEY")
-
-    url = (
-        "https://generativelanguage.googleapis.com/v1beta/models/"
-        f"{model_name}:generateContent"
-    )
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/{model_name}:generateContent"
     response = requests.post(
         url,
-        headers={
-            "Content-Type": "application/json",
-            "x-goog-api-key": api_key,
-        },
+        headers={"Content-Type": "application/json", "x-goog-api-key": api_key},
         json={
             "contents": [{"parts": [{"text": prompt}]}],
-            "generationConfig": {
-                "temperature": 0.5,
-                "responseMimeType": "application/json",
-            },
+            "generationConfig": {"temperature": 0.6, "responseMimeType": "application/json"},
         },
         timeout=REQUEST_TIMEOUT,
     )
@@ -478,140 +419,65 @@ def call_gemini_once(prompt: str, model_name: str) -> dict[str, Any]:
     text = "".join(part.get("text", "") for part in parts).strip()
     if not text:
         raise RuntimeError(f"Gemini returned empty text: {payload}")
-    result = json.loads(text)
-    text_fields = [result.get("headline", ""), result.get("summary", "")]
-    text_fields.extend(result.get("selection_notes", []))
-    text_fields.extend(result.get("births_digest", []))
-    text_fields.extend(result.get("deaths_digest", []))
-    text_fields.extend(result.get("holidays_digest", []))
-    for highlight in result.get("highlights", []):
-        text_fields.extend(
-            [
-                highlight.get("year", ""),
-                highlight.get("title", ""),
-                highlight.get("story", ""),
-                highlight.get("source_basis", ""),
-            ]
-        )
-    if any(is_china_related_text(value) for value in text_fields if isinstance(value, str)):
-        raise RuntimeError("Gemini output contains filtered China-related content.")
-    return result
+    return validate_gemini_result(json.loads(text))
 
 
 def call_gemini(prompt: str) -> dict[str, Any]:
-    primary_model = DEFAULT_GEMINI_MODEL
-    fallback_model = DEFAULT_GEMINI_FALLBACK_MODEL
     errors: list[str] = []
-
-    for model_name in [primary_model, fallback_model]:
-        if not model_name:
-            continue
+    for model_name in (PRIMARY_GEMINI_MODEL, FALLBACK_GEMINI_MODEL):
         try:
             return call_gemini_once(prompt, model_name)
         except Exception as exc:
             errors.append(f"{model_name}: {exc}")
-
     raise RuntimeError(" | ".join(errors))
 
 
-def build_fallback_editorial(target_date: dt.date, merged_items: list[dict[str, Any]]) -> dict[str, Any]:
+def build_fallback_article(target_date: dt.date, merged_items: list[dict[str, Any]], cover_image_url: str) -> dict[str, Any]:
+    selected = merged_items[:6]
+    title = f"{target_date.month}月{target_date.day}日发生了什么"
+    summary = "这一天留下的历史切片充满戏剧张力：政局转折、突发事件与人物命运在同一天交叠出现。"
+    paragraphs = [
+        f"{target_date.month}月{target_date.day}日并不平静。回看不同年代的同一天，可以看到权力更替、冲突升级、人物登场与退场在时间线上相互交错。"
+    ]
     highlights = []
-    births_digest: list[str] = []
-    deaths_digest: list[str] = []
-    holidays_digest: list[str] = []
-
-    for item in merged_items:
-        category_set = set(item["categories"])
-        if "births" in category_set and len(births_digest) < 5:
-            births_digest.append(f"{item['year']}: {item['text']}")
-            continue
-        if "deaths" in category_set and len(deaths_digest) < 5:
-            deaths_digest.append(f"{item['year']}: {item['text']}")
-            continue
-        if "holidays" in category_set and len(holidays_digest) < 5:
-            holidays_digest.append(item["text"])
-            continue
-        if len(highlights) < 8:
-            highlights.append(
-                {
-                    "year": str(item["year"]),
-                    "title": item["text"][:24],
-                    "story": item["text"],
-                    "source_confidence": item.get("source_confidence", "low"),
-                    "source_basis": f"Sources: {', '.join(item['sources'])}",
-                }
-            )
-
+    html_parts = []
+    if cover_image_url:
+        html_parts.append(f"<p><img src=\"{html.escape(cover_image_url)}\" alt=\"cover\" style=\"width:100%;\"></p>")
+    for item in selected:
+        paragraphs.append(f"{item['year']}年，{item['text']}")
+        highlights.append(
+            {
+                "year": str(item["year"]),
+                "title": normalize_text(item["text"])[:20],
+                "summary": normalize_text(item["text"]),
+                "source_confidence": item["source_confidence"],
+            }
+        )
+        html_parts.append(f"<h2>{html.escape(str(item['year']))} | {html.escape(normalize_text(item['text'])[:20])}</h2>")
+        if item.get("image_url"):
+            html_parts.append(f"<p><img src=\"{html.escape(item['image_url'])}\" alt=\"event\" style=\"width:100%;\"></p>")
+        html_parts.append(f"<p>{html.escape(item['text'])}</p>")
+    full_content = "\n\n".join(paragraphs)
     return {
-        "headline": f"{target_date.month}月{target_date.day}日这天不简单",
-        "summary": "过滤全部涉华内容后，这一天留下的历史切片依旧充满戏剧性：权力更替、突发冲突与人物命运在同一天交错出现。",
-        "selection_notes": [
-            "Prioritized multi-source agreement.",
-            "Filtered China-related and CCP-related content.",
-        ],
+        "title": title,
+        "summary": summary,
+        "cover_caption": "历史回声",
+        "full_content": full_content,
+        "wechat_html": "".join(html_parts),
         "highlights": highlights,
-        "births_digest": births_digest,
-        "deaths_digest": deaths_digest,
-        "holidays_digest": holidays_digest,
     }
 
 
 def render_markdown(payload: dict[str, Any]) -> str:
-    editorial = payload["editorial"]
-    lines = [f"# {editorial['headline']}", ""]
-
+    article = payload["article"]
+    lines = [f"# {article['title']}", "", article["summary"], ""]
     if payload.get("cover_image_url"):
         lines.extend([f"![cover image]({payload['cover_image_url']})", ""])
-
-    lines.extend(
-        [
-            f"- Date: {payload['date']}",
-            f"- Wikipedia lang: {payload['wikipedia_lang']}",
-            f"- Total merged items: {payload['stats']['merged_count']}",
-            "",
-            editorial["summary"],
-            "",
-            "## Highlights",
-            "",
-        ]
-    )
-
-    for item in editorial["highlights"]:
-        lines.append(f"### {item['year']} | {item['title']}")
-        match = next(
-            (
-                entry
-                for entry in payload["merged_items"]
-                if str(entry["year"]) == str(item["year"]) and entry["text"] in item["story"]
-            ),
-            None,
-        )
-        if match and match.get("image_url"):
-            lines.append(f"![highlight image]({match['image_url']})")
-        lines.append(item["story"])
-        lines.append(f"- Confidence: {item['source_confidence']}")
-        lines.append(f"- Basis: {item['source_basis']}")
-        if match and match["pages"]:
-            lines.append(f"- Reference: [{match['pages'][0]['title']}]({match['pages'][0]['url']})")
-        lines.append("")
-
-    for section_name, key in (
-        ("Births", "births_digest"),
-        ("Deaths", "deaths_digest"),
-        ("Holidays", "holidays_digest"),
-    ):
-        if editorial.get(key):
-            lines.extend([f"## {section_name}", ""])
-            for entry in editorial[key]:
-                lines.append(f"- {entry}")
-            lines.append("")
-
-    lines.extend(["## Source Stats", ""])
-    for source_name, stats in payload["stats"]["sources"].items():
-        lines.append(f"- {source_name}: ok={stats['ok']}, items={stats['item_count']}, endpoint={stats['endpoint']}")
-        if stats["error"]:
-            lines.append(f"  error={stats['error']}")
-    lines.append("")
+    lines.extend(["## Full Content", "", article["full_content"], "", "## Highlights", ""])
+    for item in article["highlights"]:
+        lines.append(f"- {item['year']} | {item['title']} | {item['source_confidence']}")
+        lines.append(f"  {item['summary']}")
+    lines.extend(["", "## WeChat HTML", "", "```html", article["wechat_html"], "```", ""])
     return "\n".join(lines)
 
 
@@ -620,47 +486,49 @@ def save_outputs(payload: dict[str, Any], output_dir: Path) -> tuple[Path, Path]
     date_str = payload["date"]
     json_path = output_dir / f"History_Today_{date_str}.json"
     md_path = output_dir / f"History_Today_{date_str}.md"
-
     with json_path.open("w", encoding="utf-8") as file:
         json.dump(payload, file, ensure_ascii=False, indent=2)
-
     with md_path.open("w", encoding="utf-8") as file:
         file.write(render_markdown(payload))
-
     return json_path, md_path
 
 
 def main() -> None:
     args = parse_args()
     target_date = resolve_target_date(args.date, args.month, args.day)
-
     source_results = [
         {"name": "Wikimedia On this day", **fetch_wikimedia(args.lang, target_date)},
         {"name": "Day in History", **fetch_dayinhistory(target_date)},
         {"name": "API Ninjas Historical Events", **fetch_api_ninjas(target_date)},
     ]
-
     merged_items = merge_items(source_results, args.limit)
     if not merged_items:
         errors = [f"{item['name']}: {item.get('error', '')}" for item in source_results]
         raise RuntimeError(f"No merged items available. {' | '.join(errors)}")
 
     stats = source_stats(source_results, merged_items)
+    cover_image_url = select_cover_image(merged_items)
     prompt = build_gemini_prompt(target_date, merged_items, stats)
-
     try:
-        editorial = call_gemini(prompt)
+        article = call_gemini(prompt)
     except Exception as exc:
-        editorial = build_fallback_editorial(target_date, merged_items)
-        editorial["selection_notes"].append(f"Gemini fallback triggered: {exc}")
+        article = build_fallback_article(target_date, merged_items, cover_image_url)
+        article["gemini_error"] = str(exc)
 
     payload = {
         "date": target_date.isoformat(),
-        "wikipedia_lang": args.lang,
         "generated_at": dt.datetime.now(SHANGHAI_TZ).isoformat(),
-        "cover_image_url": select_cover_image(merged_items),
+        "wikipedia_lang": args.lang,
+        "model_primary": PRIMARY_GEMINI_MODEL,
+        "model_fallback": FALLBACK_GEMINI_MODEL,
+        "title": article["title"],
+        "summary": article["summary"],
+        "full_content": article["full_content"],
+        "wechat_html": article["wechat_html"],
+        "cover_image_url": cover_image_url,
+        "cover_caption": article.get("cover_caption", ""),
+        "article": article,
         "stats": stats,
-        "editorial": editorial,
         "merged_items": merged_items,
         "sources": source_results,
     }

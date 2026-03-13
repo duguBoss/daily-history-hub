@@ -115,6 +115,66 @@ CHINA_RELATED_PATTERNS = [
     "han dynasty",
     "tang dynasty",
     "song dynasty",
+    "taiwan strait",
+    "formosa",
+    "taiwanese",
+    "chiang ching-kuo",
+    "lee teng-hui",
+    "chen shui-bian",
+    "ma ying-jeou",
+    "tsai ing-wen",
+    "democratic progressive party",
+    "nationalist government",
+    "warlord era",
+    "first sino-japanese war",
+    "second sino-japanese war",
+    "boxer rebellion",
+    "xinhai revolution",
+    "beiyang",
+    "qing empire",
+    "puyi",
+    "yuan shikai",
+]
+
+SENSITIVE_TOPIC_PATTERNS = [
+    "politics",
+    "political",
+    "territorial dispute",
+    "territorial disputes",
+    "border dispute",
+    "border conflicts",
+    "sovereignty",
+    "sovereign claim",
+    "annexation",
+    "cession",
+    "secession",
+    "independence movement",
+    "independence referendum",
+    "separatist",
+    "self-determination",
+    "civil war",
+    "coup",
+    "military junta",
+    "regime",
+    "party congress",
+    "communist party",
+    "nationalist party",
+    "election",
+    "referendum",
+    "protest movement",
+    "occupation of",
+    "occupied territory",
+    "disputed territory",
+    "uprising",
+    "rebellion",
+    "revolution",
+    "martial law",
+    "colonial rule",
+    "colonial government",
+    "geopolitical",
+    "sanction",
+    "diplomatic crisis",
+    "ethnic conflict",
 ]
 
 
@@ -211,6 +271,11 @@ def is_china_related_text(text: str) -> bool:
     return any(pattern in lowered for pattern in CHINA_RELATED_PATTERNS)
 
 
+def is_sensitive_topic_text(text: str) -> bool:
+    lowered = normalize_text(text).lower()
+    return any(pattern in lowered for pattern in SENSITIVE_TOPIC_PATTERNS)
+
+
 def normalize_page(page: dict[str, Any]) -> dict[str, str]:
     content_urls = page.get("content_urls") or {}
     desktop = content_urls.get("desktop") or {}
@@ -240,6 +305,37 @@ def is_china_related_item(item: dict[str, Any]) -> bool:
             ]
         )
     return any(is_china_related_text(field) for field in fields if field)
+
+
+def is_sensitive_item(item: dict[str, Any]) -> bool:
+    fields = [str(item.get("year", "")), item.get("text", ""), item.get("category", "")]
+    detail = item.get("detail") or {}
+    fields.extend(
+        [
+            detail.get("title", ""),
+            detail.get("url", ""),
+            detail.get("description", ""),
+            detail.get("extract", ""),
+        ]
+    )
+    for page in item.get("pages", []):
+        fields.extend(
+            [
+                page.get("title", ""),
+                page.get("url", ""),
+                page.get("description", ""),
+                page.get("extract", ""),
+            ]
+        )
+    return any(is_sensitive_topic_text(field) for field in fields if field)
+
+
+def filter_safe_items(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    filtered = [item for item in items if not is_china_related_item(item) and not is_sensitive_item(item)]
+    removed = len(items) - len(filtered)
+    if removed:
+        log(f"Filtered China-related or sensitive items after enrichment: {removed}")
+    return filtered
 
 
 def britannica_date_url(target_date: dt.date) -> str:
@@ -677,7 +773,7 @@ def build_gemini_prompt(target_date: dt.date, merged_items: list[dict[str, Any]]
         "Use only the facts in the JSON payload. Do not invent details.\n"
         "Use Britannica-sourced item details as the primary narrative material.\n"
         "Items from other sources may be mentioned briefly and should not be described as illustrated.\n"
-        "Exclude anything related to China, CCP, PRC, ROC, Hong Kong, Macau, Taiwan, Tibet, Xinjiang, or Chinese dynasties.\n"
+        "Exclude anything related to China, PRC, ROC, Hong Kong, Macau, Taiwan, Tibet, Xinjiang, Chinese dynasties, politics, parties, sovereignty, independence, territorial disputes, border conflicts, coups, rebellions, revolutions, sanctions, diplomatic crises, and geopolitics.\n"
         "Write in a click-enticing style, but remain factual.\n"
         "Return valid JSON only with this schema:\n"
         "{\n"
@@ -1394,7 +1490,16 @@ def render_wechat_html(title: str, summary: str, content_text: str, all_images: 
             "</section>",
         ]
     )
-    return "".join(parts)
+    content_html = "".join(parts)
+    top_banner = (
+        "<img src='https://mmbiz.qpic.cn/mmbiz_gif/3hAJnwuyZuicicZkgJBUCCaricdibomDBrTzXgUR7FJnf11qGIo8nmKt6RxibXrb5s4RFb9UZ9UOHQy7fqQyI377Licw/0?wx_fmt=gif' "
+        "style='width:100%;display:block;'>"
+    )
+    bottom_banner = (
+        "<img src='https://mmbiz.qpic.cn/mmbiz_gif/3hAJnwuyZuicicZkgJBUCCaricdibomDBrTzk57DCmhVC16o9ILH0Tn1YPEiarfLRRQSVFN2mJdeYibGnBPialPIzvojw/0?wx_fmt=gif' "
+        "style='width:100%;display:block;'>"
+    )
+    return f"{top_banner}<section style='padding:0;'>{content_html}</section>{bottom_banner}"
 
 
 def save_outputs(payload: dict[str, Any], output_dir: Path, target_date: dt.date) -> Path:
@@ -1424,6 +1529,9 @@ def main() -> None:
     log(f"Merged unique items: {len(merged_items)}")
 
     enrich_item_details(merged_items, args.lang)
+    merged_items = filter_safe_items(merged_items)
+    if not merged_items:
+        raise RuntimeError("No safe non-sensitive items remain after strict filtering.")
     stats = source_stats(source_results, merged_items)
     log(f"Source stats: {json.dumps(stats, ensure_ascii=False)}")
     prompt = build_gemini_prompt(target_date, merged_items, stats)

@@ -775,9 +775,10 @@ def build_gemini_prompt(target_date: dt.date, merged_items: list[dict[str, Any]]
         "Items from other sources may be mentioned briefly and should not be described as illustrated.\n"
         "Exclude anything related to China, PRC, ROC, Hong Kong, Macau, Taiwan, Tibet, Xinjiang, Chinese dynasties, politics, parties, sovereignty, independence, territorial disputes, border conflicts, coups, rebellions, revolutions, sanctions, diplomatic crises, and geopolitics.\n"
         "Write in a click-enticing style, but remain factual.\n"
+        "The title must be in Simplified Chinese and should follow this idea: '历史上的今天 + one specific event', concise and attention-grabbing.\n"
         "Return valid JSON only with this schema:\n"
         "{\n"
-        '  "title": "click-enticing Chinese title under 22 chars",\n'
+        '  "title": "简体中文标题，不超过22字，风格接近“历史上的今天：某个事件”",\n'
         '  "summary": "Chinese summary no more than 50 characters",\n'
         '  "content_text": "complete Chinese article body with 5 short paragraphs separated by \\n\\n"\n'
         "}\n"
@@ -1235,11 +1236,11 @@ def build_generated_cover_prompt(article: dict[str, Any], merged_items: list[dic
     title = normalize_text(article.get("title", ""))
     summary = normalize_text(article.get("summary", ""))
     return (
-        "Create a cinematic, editorial-style historical collage cover for a daily history article. "
-        f"Date: {target_date.isoformat()}. "
-        f"Headline theme: {title}. Summary: {summary}. Key events: {highlights_text}. "
-        "Landscape 16:9 composition, dramatic lighting, archival documentary mood, realistic details, "
-        "newspaper-magazine cover feel, no text, no watermark, no logo."
+        "请生成一张“历史上的今天”专题封面图。"
+        f"日期：{target_date.isoformat()}。"
+        f"标题主题：{title}。摘要：{summary}。重点事件：{highlights_text}。"
+        "画面要求：16:9 横版构图，纪实感、历史感、杂志封面气质，光影克制，细节真实，氛围有张力。"
+        "不要出现任何文字、数字、水印、logo。"
     )
 
 
@@ -1251,11 +1252,11 @@ def build_generated_event_prompt(item: dict[str, Any], target_date: dt.date) -> 
     text = normalize_text(item.get("text", ""))
     year = item.get("year", "")
     return (
-        "Create a cinematic, realistic historical editorial illustration for a daily history article. "
-        f"Date context: {target_date.isoformat()}. Event year: {year}. "
-        f"Event: {text}. Title cue: {title}. Description: {description}. Extra context: {extract}. "
-        "Landscape 16:9 composition, documentary tone, historically evocative, realistic details, "
-        "no text, no watermark, no logo."
+        "请根据下面的历史事件生成一张配图。"
+        f"日期背景：{target_date.isoformat()}。事件年份：{year}。"
+        f"事件内容：{text}。标题提示：{title}。补充说明：{description}。细节背景：{extract}。"
+        "画面要求：16:9 横版构图，纪实风格，真实细节，具有历史场景感和新闻专题插图气质。"
+        "不要出现任何中文、英文、数字、水印、logo。"
     )
 
 

@@ -9,6 +9,7 @@ import mimetypes
 import os
 import re
 import shutil
+import random
 from collections import Counter
 from pathlib import Path
 from typing import Any
@@ -769,19 +770,19 @@ def build_gemini_prompt(target_date: dt.date, merged_items: list[dict[str, Any]]
         for item in merged_items
     ]
     return (
-        "You are writing a finished WeChat article in Simplified Chinese.\n"
-        "Use only the facts in the JSON payload. Do not invent historical events.\n"
-        "**CRITICAL REQUIREMENTS (必须严格遵守):**\n"
-        "1. 叙事视角：作为全知全能的叙述者直接陈述历史事实。**绝对禁止**出现任何表明信息来源的词汇（如“根据大英百科全书”、“维基百科补充提到”、“资料显示”、“参考记录”等）。\n"
-        "2. 消除AI痕迹：**绝对禁止**使用任何AI生成的元语言或修饰词（如“缺少详细信息”、“这标志着”、“不可否认”、“以下为您生成”、“为您串联”等）。\n"
-        "3. 内容完整性：文章必须结构完整、连贯流畅，自然地展开故事，并且有一个合理的收尾句。**绝对不能**烂尾、中途断裂或显得拼凑缺失。\n"
-        "4. 行文风格：引人入胜的杂志深度专栏风格，同时保持客观真实，不带感情色彩。\n"
+        "You are writing a finished WeChat article.\n"
+        "**CRITICAL REQUIREMENTS (必须严格遵守以下所有限制):**\n"
+        "1. 语言要求：**全部内容必须使用标准简体中文（Simplified Chinese）**。绝对禁止输出繁体字！绝对禁止出现整句或整段的英文（除必须保留的少数专有名词外，务必将所有英文素材完美翻译成中文）。\n"
+        "2. 叙事视角：作为全知全能的叙述者直接陈述历史事实。**绝对禁止**出现任何表明信息来源的词汇（如“根据大英百科全书”、“维基百科补充提到”、“资料显示”、“参考记录”等）。\n"
+        "3. 消除AI痕迹：**绝对禁止**使用任何AI生成的元语言或修饰词（如“缺少详细信息”、“这标志着”、“不可否认”、“以下为您生成”、“为您串联”等）。\n"
+        "4. 内容完整性：文章必须结构完整、连贯流畅，自然地展开故事，并且有一个合理的收尾句。**绝对不能**烂尾、中途断裂或显得拼凑缺失。\n"
+        "5. 行文风格：引人入胜的杂志深度专栏风格，同时保持客观真实，不带感情色彩。\n"
         "Exclude anything related to China, PRC, ROC, Hong Kong, Macau, Taiwan, Tibet, Xinjiang, Chinese dynasties, politics, parties, sovereignty, independence, territorial disputes, border conflicts, coups, rebellions, revolutions, sanctions, diplomatic crises, and geopolitics.\n"
         "The title must be in Simplified Chinese and should follow this idea: '历史上的今天 + one specific event', concise and attention-grabbing.\n"
         "Return valid JSON only with this schema:\n"
         "{\n"
-        '  "title": "简体中文标题，不超过22字，风格接近“历史上的今天：某个事件”",\n'
-        '  "summary": "Chinese summary no more than 50 characters",\n'
+        '  "title": "简体中文标题，不超过22字",\n'
+        '  "summary": "纯简体中文摘要，不超过50字",\n'
         '  "content_text": "complete Chinese article body with at least 5 paragraphs separated by \\n\\n, combining the historical points logically."\n'
         "}\n"
         "Do not output markdown. Do not output HTML. Do not mention filtering.\n"
@@ -798,11 +799,20 @@ def validate_gemini_result(result: dict[str, Any]) -> dict[str, Any]:
         if is_china_related_text(value):
             raise RuntimeError("Gemini output contains filtered content.")
         
-        # 增加对明显的AI词汇和来源词汇的拦截
+        # 拦截大段英文 (如果内容中英文字母占比异常高，说明输出了英文段落)
+        alpha_count = len(re.findall(r'[a-zA-Z]', value))
+        if len(value) > 0 and (alpha_count / len(value)) > 0.3:
+            raise RuntimeError("Gemini output contains too much English text.")
+            
+        # 强力拦截繁体字 (包含常见高频繁体字即刻判定失败重做)
+        forbidden_trad_chars = ["發", "國", "會", "對", "這", "們", "說", "與", "為", "後", "時", "進", "過", "請", "讓", "僅"]
+        if any(char in value for char in forbidden_trad_chars):
+            raise RuntimeError("Gemini output contains Traditional Chinese characters.")
+
+        # 强力拦截暴露来源和AI痕迹的词汇
         forbidden_words = ["补充提到", "根据", "资料显示", "维基百科", "大英百科全书", "大英百科", "参考"]
         if any(word in value for word in forbidden_words):
-             # 不直接抛出错误而是进行简单清洗以增加鲁棒性，或者严格拦截
-             pass # 提示词已强力约束，若仍有可被容忍，但可以在此处执行正则替换
+             raise RuntimeError("Gemini output contains forbidden source words.")
              
     if len(result["summary"].strip()) > 50:
         raise RuntimeError("Gemini output summary exceeds 50 characters.")
@@ -846,7 +856,13 @@ def call_gemini(prompt: str) -> dict[str, Any]:
 
 
 def build_fallback_article(target_date: dt.date, merged_items: list[dict[str, Any]]) -> dict[str, Any]:
-    selected = merged_items[:6]
+    # 为了避免输出纯英文，这里先过滤出包含中文字符的事件用于拼接兜底文章
+    zh_items = [item for item in merged_items if re.search(r'[\u4e00-\u9fff]', item.get('text', ''))]
+    if not zh_items:
+        # 如果极端情况下没有任何中文内容，依然拿几个凑数（此时可能会出现英文）
+        zh_items = merged_items[:6]
+        
+    selected = zh_items[:6]
     paragraphs = [
         f"{target_date.month}月{target_date.day}日这一天，历史留下了几段截然不同的切片，权力更替、突发事件和人物命运交错重叠。"
     ]
@@ -1000,7 +1016,7 @@ def fetch_unsplash_image(item: dict[str, Any], used_unsplash_ids: set[str] = Non
     for result in payload.get("results") or []:
         photo_id = result.get("id")
         if photo_id and photo_id in used_unsplash_ids:
-            continue # 拦截重复使用的图片ID
+            continue
             
         urls = result.get("urls") or {}
         alt_description = normalize_text(result.get("alt_description", "") or result.get("description", ""))
@@ -1241,8 +1257,9 @@ def download_image(url: str, target_dir: Path) -> str:
     extension = guess_extension(response.headers.get("Content-Type", ""), url)
     digest = hashlib.sha1(url.encode("utf-8")).hexdigest()[:16]
     file_path = target_dir / f"{digest}{extension}"
-    if not file_path.exists():
-        file_path.write_bytes(response.content)
+    
+    # 强制重新写入文件以绕过可能的文件缓存机制
+    file_path.write_bytes(response.content)
     return str(file_path)
 
 
@@ -1349,7 +1366,10 @@ def join_hf_space_url(path_or_url: str) -> str:
 
 
 def request_gradio_generated_image(prompt: str) -> str:
-    payload = {"data": [prompt, 768, 1344, 9, 42, True]}
+    # 彻底解决每次生成同一样图片的问题：给参数注入随机的Seed，而不是写死的42
+    random_seed = random.randint(1, 2147483647)
+    payload = {"data": [prompt, 768, 1344, 9, random_seed, True]}
+    
     start_response = requests.post(
         f"{Z_IMAGE_TURBO_BASE_URL}/gradio_api/call/generate_image",
         headers=gradio_headers(),
@@ -1360,7 +1380,8 @@ def request_gradio_generated_image(prompt: str) -> str:
         body_preview = start_response.text[:600].replace("\n", " ")
         raise RuntimeError(f"Gradio start request failed: HTTP {start_response.status_code} {body_preview}")
     event_id = extract_gradio_event_id(start_response.json())
-    log(f"Gradio event id: {event_id}")
+    log(f"Gradio event id: {event_id} with seed {random_seed}")
+    
     result_response = requests.get(
         f"{Z_IMAGE_TURBO_BASE_URL}/gradio_api/call/generate_image/{event_id}",
         headers=gradio_headers(),
@@ -1373,10 +1394,8 @@ def request_gradio_generated_image(prompt: str) -> str:
 
 
 def generate_huggingface_image(prompt: str, file_path: Path) -> str:
-    if file_path.exists():
-        log(f"Reuse existing generated image: {file_path}")
-        return str(file_path)
-    log(f"Generating image: {file_path.name}")
+    # 彻底去掉复用旧图的检查逻辑，强制重载并覆盖
+    log(f"Generating new image for: {file_path.name}")
     log(f"Gradio prompt: {prompt[:240]}")
     image_url = request_gradio_generated_image(prompt)
     log(f"Generated remote image URL: {image_url}")

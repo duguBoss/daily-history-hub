@@ -46,9 +46,9 @@ jobs:
           echo "Git status before commit:"
           git status --short
 
-      - name: Commit generated files
+      - name: Commit and Push changes
         run: |
           git config --local user.email "github-actions[bot]@users.noreply.github.com"
           git config --local user.name "github-actions[bot]"
-          git add output assets/generated
-          git diff --quiet && git diff --staged --quiet || (git commit -m "auto-generate history today" && git push)
+          git add outputs/ history.json
+          git diff --quiet && git diff --staged --quiet || (git commit -m "Auto-update daily music and history" && git push)

@@ -797,25 +797,27 @@ def validate_gemini_result(result: dict[str, Any]) -> dict[str, Any]:
         if not isinstance(value, str) or not value.strip():
             raise RuntimeError(f"Gemini output missing {key}")
         if is_china_related_text(value):
-            raise RuntimeError("Gemini output contains filtered content.")
+            raise RuntimeError(f"Validation failed: output contains filtered (China-related) content in [{key}].")
         
         # 拦截大段英文 (如果内容中英文字母占比异常高，说明输出了英文段落)
         alpha_count = len(re.findall(r'[a-zA-Z]', value))
         if len(value) > 0 and (alpha_count / len(value)) > 0.3:
-            raise RuntimeError("Gemini output contains too much English text.")
+            raise RuntimeError(f"Validation failed: Gemini output contains too much English text in [{key}].")
             
         # 强力拦截繁体字 (包含常见高频繁体字即刻判定失败重做)
         forbidden_trad_chars = ["發", "國", "會", "對", "這", "們", "說", "與", "為", "後", "時", "進", "過", "請", "讓", "僅"]
-        if any(char in value for char in forbidden_trad_chars):
-            raise RuntimeError("Gemini output contains Traditional Chinese characters.")
+        found_trad = [char for char in forbidden_trad_chars if char in value]
+        if found_trad:
+            raise RuntimeError(f"Validation failed: Gemini output contains Traditional Chinese characters ({found_trad}) in [{key}].")
 
         # 强力拦截暴露来源和AI痕迹的词汇
         forbidden_words = ["补充提到", "根据", "资料显示", "维基百科", "大英百科全书", "大英百科", "参考"]
-        if any(word in value for word in forbidden_words):
-             raise RuntimeError("Gemini output contains forbidden source words.")
+        found_words = [word for word in forbidden_words if word in value]
+        if found_words:
+             raise RuntimeError(f"Validation failed: Gemini output contains forbidden source words ({found_words}) in [{key}].")
              
     if len(result["summary"].strip()) > 50:
-        raise RuntimeError("Gemini output summary exceeds 50 characters.")
+        raise RuntimeError("Validation failed: Gemini output summary exceeds 50 characters.")
     return result
 
 
@@ -829,7 +831,8 @@ def call_gemini_once(prompt: str, model_name: str) -> dict[str, Any]:
         headers={"Content-Type": "application/json", "x-goog-api-key": api_key},
         json={
             "contents": [{"parts": [{"text": prompt}]}],
-            "generationConfig": {"temperature": 0.6, "responseMimeType": "application/json"},
+            # 将 temperature 提高到 0.75，增加输出多样性，打破僵化的输出格式
+            "generationConfig": {"temperature": 0.75, "responseMimeType": "application/json"},
         },
         timeout=REQUEST_TIMEOUT,
     )
@@ -842,7 +845,16 @@ def call_gemini_once(prompt: str, model_name: str) -> dict[str, Any]:
     text = "".join(part.get("text", "") for part in parts).strip()
     if not text:
         raise RuntimeError(f"Gemini returned empty text: {payload}")
-    return validate_gemini_result(json.loads(text))
+        
+    # === 关键控制台打印：在这里打印AI直接吐出的内容，方便排查 ===
+    log(f"\n================ Gemini Raw Output ({model_name}) ================\n{text}\n==================================================================\n")
+
+    try:
+        parsed_result = json.loads(text)
+    except json.JSONDecodeError as e:
+        raise RuntimeError(f"Gemini output is not valid JSON: {e}")
+
+    return validate_gemini_result(parsed_result)
 
 
 def call_gemini(prompt: str) -> dict[str, Any]:
@@ -851,7 +863,7 @@ def call_gemini(prompt: str) -> dict[str, Any]:
         try:
             return call_gemini_once(prompt, model_name)
         except Exception as exc:
-            errors.append(f"{model_name}: {exc}")
+            errors.append(f"{model_name} Error: {exc}")
     raise RuntimeError(" | ".join(errors))
 
 
@@ -1582,8 +1594,17 @@ def main() -> None:
         article = call_gemini(prompt)
         log("Article generation: Gemini success")
     except Exception as exc:
-        log(f"Article generation fallback triggered: {exc}")
+        log(f"\n====================================")
+        log(f"⚠️ 拦截触发! 使用保底逻辑 (Fallback) ⚠️")
+        log(f"具体失败原因: {exc}")
+        log(f"====================================\n")
         article = build_fallback_article(target_date, merged_items)
+
+    # 在控制台打印被采用的内容结构
+    log(f"\n【最终生成的文章内容结构】:")
+    log(f"Title: {article.get('title')}")
+    log(f"Summary: {article.get('summary')}")
+    log(f"Content (前100字): {article.get('content_text', '')[:100]}...\n")
 
     all_images, image_urls = download_assets(target_date, merged_items, args.lang, article)
     content_html = render_wechat_html(article["title"], article["summary"], article["content_text"], all_images)

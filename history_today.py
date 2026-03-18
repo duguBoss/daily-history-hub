@@ -778,10 +778,10 @@ def build_gemini_prompt(target_date: dt.date, merged_items: list[dict[str, Any]]
         "4. 内容完整性：文章必须结构完整、连贯流畅，自然地展开故事，并且有一个合理的收尾句。**绝对不能**烂尾、中途断裂或显得拼凑缺失。\n"
         "5. 行文风格：引人入胜的杂志深度专栏风格，同时保持客观真实，不带感情色彩。\n"
         "Exclude anything related to China, PRC, ROC, Hong Kong, Macau, Taiwan, Tibet, Xinjiang, Chinese dynasties, politics, parties, sovereignty, independence, territorial disputes, border conflicts, coups, rebellions, revolutions, sanctions, diplomatic crises, and geopolitics.\n"
-        "The title must be in Simplified Chinese and should follow this idea: '历史上的今天 + one specific event', concise and attention-grabbing.\n"
+        "The title must be in Simplified Chinese. Must be exactly 32 characters. Must follow this format: '历史上的今天：[流量标题格式，包含悬念/数字/反差/热点词]，例如：历史上的今天：此人发明一物改变世界，至今仍影响每个人'.\n"
         "Return valid JSON only with this schema:\n"
         "{\n"
-        '  "title": "简体中文标题，不超过22字",\n'
+        '  "title": "简体中文标题，严格32字",\n'
         '  "summary": "纯简体中文摘要，不超过50字",\n'
         '  "content_text": "complete Chinese article body with at least 5 paragraphs separated by \\n\\n, combining the historical points logically."\n'
         "}\n"

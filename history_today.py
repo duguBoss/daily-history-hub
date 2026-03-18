@@ -867,11 +867,18 @@ def call_gemini_once(prompt: str, model_name: str) -> dict[str, Any]:
 
 def call_gemini(prompt: str) -> dict[str, Any]:
     errors: list[str] = []
-    for model_name in (PRIMARY_GEMINI_MODEL, FALLBACK_GEMINI_MODEL):
-        try:
-            return call_gemini_once(prompt, model_name)
-        except Exception as exc:
-            errors.append(f"{model_name} Error: {exc}")
+    max_retries = 2
+    for attempt in range(max_retries):
+        for model_name in (PRIMARY_GEMINI_MODEL, FALLBACK_GEMINI_MODEL):
+            try:
+                result = call_gemini_once(prompt, model_name)
+                if attempt > 0:
+                    log(f"重试成功! (尝试 {attempt + 1})")
+                return result
+            except Exception as exc:
+                errors.append(f"{model_name} Error: {exc}")
+                log(f"生成失败 (尝试 {attempt + 1}, 模型 {model_name}): {exc}")
+                continue
     raise RuntimeError(" | ".join(errors))
 
 

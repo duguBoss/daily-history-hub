@@ -17,6 +17,7 @@ from urllib.parse import quote, urlencode
 
 import pytz
 import requests
+import opencc
 
 
 SHANGHAI_TZ = pytz.timezone("Asia/Shanghai")
@@ -209,6 +210,13 @@ def resolve_target_date(date_arg: str | None, month_arg: int | None, day_arg: in
 
 def normalize_text(text: str) -> str:
     return " ".join((text or "").replace("\n", " ").split())
+
+
+def to_simplified(text: str) -> str:
+    if not text:
+        return text
+    converter = opencc.OpenCC("t2s")
+    return converter.convert(text)
 
 
 def log(message: str) -> None:
@@ -796,6 +804,10 @@ def validate_gemini_result(result: dict[str, Any]) -> dict[str, Any]:
         value = result.get(key, "")
         if not isinstance(value, str) or not value.strip():
             raise RuntimeError(f"Gemini output missing {key}")
+        
+        # 自动将繁体字转换为简体字
+        value = to_simplified(value)
+        
         if is_china_related_text(value):
             raise RuntimeError(f"Validation failed: output contains filtered (China-related) content in [{key}].")
         
@@ -803,18 +815,14 @@ def validate_gemini_result(result: dict[str, Any]) -> dict[str, Any]:
         alpha_count = len(re.findall(r'[a-zA-Z]', value))
         if len(value) > 0 and (alpha_count / len(value)) > 0.3:
             raise RuntimeError(f"Validation failed: Gemini output contains too much English text in [{key}].")
-            
-        # 强力拦截繁体字 (包含常见高频繁体字即刻判定失败重做)
-        forbidden_trad_chars = ["發", "國", "會", "對", "這", "們", "說", "與", "為", "後", "時", "進", "過", "請", "讓", "僅", "騎", "萊", "團", "貝", "頁", "樓", "禱", "艦", "鍊", "幣", "癥", "羈", "讚", "鬱", "韋", "島", "蠻", "襲", "繪", "蘭", "灑", "爐", "繩", "釐", "黴", "濤", "獵", "債", "憲", "澤", "諾", "誤", "諱", "賢", "賤", "贈", "贊", "較", "靈", "韻", "飾", "饑", "驕", "骸", "魄", "鮭", "黨", "齊", "齒", "龍", "龜", "龠"]
-        found_trad = [char for char in forbidden_trad_chars if char in value]
-        if found_trad:
-            raise RuntimeError(f"Validation failed: Gemini output contains Traditional Chinese characters ({found_trad}) in [{key}].")
 
-        # 强力拦截暴露来源和AI痕迹的词汇
+        # 拦截暴露来源和AI痕迹的词汇
         forbidden_words = ["补充提到", "根据", "资料显示", "维基百科", "大英百科全书", "大英百科", "参考"]
         found_words = [word for word in forbidden_words if word in value]
         if found_words:
              raise RuntimeError(f"Validation failed: Gemini output contains forbidden source words ({found_words}) in [{key}].")
+             
+        result[key] = value
              
     if len(result["summary"].strip()) > 50:
         raise RuntimeError("Validation failed: Gemini output summary exceeds 50 characters.")

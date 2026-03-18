@@ -790,7 +790,7 @@ def build_gemini_prompt(target_date: dt.date, merged_items: list[dict[str, Any]]
         "Return valid JSON only with this schema:\n"
         "{\n"
         '  "title": "简体中文标题，严格32字",\n'
-        '  "summary": "纯简体中文摘要，不超过50字",\n'
+        '  "summary": "纯简体中文摘要，不超过80字",\n'
         '  "content_text": "complete Chinese article body with at least 5 paragraphs separated by \\n\\n, combining the historical points logically."\n'
         "}\n"
         "Do not output markdown. Do not output HTML. Do not mention filtering.\n"
@@ -824,8 +824,8 @@ def validate_gemini_result(result: dict[str, Any]) -> dict[str, Any]:
              
         result[key] = value
              
-    if len(result["summary"].strip()) > 50:
-        raise RuntimeError("Validation failed: Gemini output summary exceeds 50 characters.")
+    if len(result["summary"].strip()) > 80:
+        raise RuntimeError("Validation failed: Gemini output summary exceeds 80 characters.")
     return result
 
 
@@ -895,11 +895,15 @@ def build_fallback_article(target_date: dt.date, merged_items: list[dict[str, An
         else:
             paragraphs.append(f"{item['year']}年：{item['text']}")
             
-    paragraphs.append("时间的刻度在这些事件中不断延展，共同构建了我们今天所认识的世界。")        
+    paragraphs.append("时间的刻度在这些事件中不断延展，共同构建了我们今天所认识的世界。")
+    
+    content_text = "\n\n".join(paragraphs)
+    content_text = to_simplified(content_text)
+        
     return {
-        "title": f"历史上的今天：{target_date.month}月{target_date.day}日发生了什么",
-        "summary": "这一天并不平静，几段历史在同日交错。",
-        "content_text": "\n\n".join(paragraphs),
+        "title": to_simplified(f"历史上的今天：{target_date.month}月{target_date.day}日发生了什么"),
+        "summary": to_simplified("这一天并不平静，几段历史在同日交错。"),
+        "content_text": content_text,
     }
 
 

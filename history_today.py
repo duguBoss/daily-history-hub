@@ -805,7 +805,7 @@ def validate_gemini_result(result: dict[str, Any]) -> dict[str, Any]:
             raise RuntimeError(f"Validation failed: Gemini output contains too much English text in [{key}].")
             
         # 强力拦截繁体字 (包含常见高频繁体字即刻判定失败重做)
-        forbidden_trad_chars = ["發", "國", "會", "對", "這", "們", "說", "與", "為", "後", "時", "進", "過", "請", "讓", "僅"]
+        forbidden_trad_chars = ["發", "國", "會", "對", "這", "們", "說", "與", "為", "後", "時", "進", "過", "請", "讓", "僅", "騎", "萊", "團", "貝", "頁", "樓", "禱", "艦", "鍊", "幣", "癥", "羈", "讚", "鬱", "韋", "島", "蠻", "襲", "繪", "蘭", "灑", "爐", "繩", "釐", "黴", "濤", "獵", "債", "憲", "澤", "諾", "誤", "諱", "賢", "賤", "贈", "贊", "較", "靈", "韻", "飾", "饑", "驕", "骸", "魄", "鮭", "黨", "齊", "齒", "龍", "龜", "龠"]
         found_trad = [char for char in forbidden_trad_chars if char in value]
         if found_trad:
             raise RuntimeError(f"Validation failed: Gemini output contains Traditional Chinese characters ({found_trad}) in [{key}].")

@@ -1567,6 +1567,14 @@ def fetch_unsplash_or_generated_image(
         return download_image(item["image_url"], target_dir)
 
     try:
+        ai_image = generate_huggingface_event_image(item, target_date, target_dir, index)
+        if ai_image:
+            log(f"AI generated image for item {index}: {ai_image}")
+            return ai_image
+    except Exception as exc:
+        log(f"AI image generation failed for item {index}: {exc}")
+
+    try:
         unsplash_url = fetch_unsplash_image(item, used_unsplash_ids)
     except Exception as exc:
         log(f"Unsplash lookup failed for item {index}: {exc}")
@@ -1574,7 +1582,8 @@ def fetch_unsplash_or_generated_image(
     if unsplash_url:
         log(f"Unsplash image found for item {index}: {unsplash_url}")
         return download_image(unsplash_url, target_dir)
-    return generate_huggingface_event_image(item, target_date, target_dir, index)
+
+    return ""
 
 
 def download_assets(

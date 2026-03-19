@@ -645,34 +645,38 @@ def fetch_history_dot_com(target_date: dt.date) -> dict[str, Any]:
 
 EXTRACT_HISTORY_DOT_COM_PROMPT = """You are a data extraction assistant. Extract historical events from the provided text collected from history.com this-day-in-history page via jina.ai.
 
-The raw text contains a lot of navigation content at the top. Focus on the "Also on This Day in History" section near the bottom.
+The raw text has a section called "Also on This Day in History" near the bottom. Extract events from this section ONLY.
 
-Event format in the raw text:
-- Events appear as links with year: [1865 Battle of Bentonville begins...](URL) 1:46 m read
-- Some events have an inline image AFTER the duration text: [1916 First U.S. air combat...](URL) 1:26 m read ! [text](image-url)
-- The image URL in the raw text looks like: https://res.cloudinary.com/aenetworks/image/upload/...
-- Images are NOT always present - only extract if they directly follow an event
+Each event line looks like this:
+- [1865 Battle of Bentonville begins in North Carolina On March 19, 1865...] (URL) 1:46 m read
+- [1916 First U.S. air combat mission begins Eight Curtiss "Jenny" planes...] (URL) 1:26 m read ![Image 13](https://res.cloudinary.com/aenetworks/image/upload/...)
+- [1931 Nevada legalizes gambling In an attempt...] (URL) 1:10 m read ![Image 14](https://res.cloudinary.com/aenetworks/image/upload/...)
 
-For each event, extract: year, event description, and the image URL that appears after the event (if any).
+Pattern: [YEAR + description text] (URL) duration m read [OPTIONAL: ![Image N](cloudinary_url)]
+
+For each event:
+- year: the 4-digit number at the very start (e.g., "1865", "1916", "1931")
+- text: the description text between the year and the closing bracket, before the URL
+- image_url: if there is ![Image N](...) after "m read", extract the cloudinary.com URL from inside the parentheses; otherwise use empty string ""
 
 Return a JSON array where each element has exactly this structure:
 [
   {
     "year": "year string",
     "text": "event description",
-    "image_url": "direct image URL found after this event, or empty string if none"
+    "image_url": "direct image URL or empty string"
   }
 ]
 
 Rules:
-1. Focus on the "Also on This Day in History" section at the bottom of the content
+1. Focus ONLY on the "Also on This Day in History" section
 2. Extract the YEAR (4-digit number at start of each event)
-3. Extract the event description (text between year and the URL)
-4. If "! [" appears after an event with a cloudinary.com URL, extract that image URL
-5. Do NOT randomly assign images - each image must be directly associated with its event
-6. Only extract events (not births/deaths)
+3. Extract the event description (text after year, before the URL link)
+4. If there is ![Image N](cloudinary_url) after the event, extract that URL; otherwise use ""
+5. Do NOT randomly assign images - only use the image that directly follows an event
+6. Only extract events (skip "Born on This Day" section)
 7. Filter out China-related content, political events, wars, conflicts
-8. Return ONLY valid JSON, no markdown, no explanation
+8. Return ONLY valid JSON array, no markdown, no explanation
 
 Target date: {target_date}
 

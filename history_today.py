@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import asyncio
 import datetime as dt
 import hashlib
 import html
@@ -13,6 +14,8 @@ import random
 from collections import Counter
 from pathlib import Path
 from typing import Any
+
+from playwright.sync_api import sync_playwright
 from urllib.parse import quote, urlencode
 
 import pytz
@@ -427,23 +430,22 @@ def parse_britannica_item(year: str, text_parts: list[str], image_url: str, deta
 
 def fetch_britannica(target_date: dt.date) -> dict[str, Any]:
     url = britannica_date_url(target_date)
-    headers = {
-        "User-Agent": (
-            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
-            "(KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36"
-        ),
-        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
-        "Accept-Language": "en-US,en;q=0.9",
-        "Cache-Control": "no-cache",
-        "Pragma": "no-cache",
-        "Referer": "https://www.britannica.com/",
-    }
     try:
-        response = requests.get(url, headers=headers, timeout=REQUEST_TIMEOUT)
-        response.raise_for_status()
+        with sync_playwright() as p:
+            browser = p.chromium.launch(headless=True)
+            context = browser.new_context(
+                user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36",
+                locale="en-US",
+            )
+            page = context.new_page()
+            page.goto(url, wait_until="networkidle", timeout=REQUEST_TIMEOUT * 1000)
+            page.wait_for_selector(".event-item", timeout=10000)
+            html_content = page.content()
+            browser.close()
     except Exception as exc:
-        return {"ok": False, "items": [], "endpoint": url, "error": str(exc)}
-    lines = html_to_lines(response.text)
+        return {"ok": False, "items": [], "endpoint": url, "error": f"Playwright error: {exc}"}
+
+    lines = html_to_lines(html_content)
     items: list[dict[str, Any]] = []
     in_events = False
     featured_taken = False

@@ -619,7 +619,7 @@ def fetch_api_ninjas(target_date: dt.date) -> dict[str, Any]:
             items.append(item)
     log(f"\n================ API Ninjas Extracted Items ================")
     for idx, item in enumerate(items):
-        log(f"Item {idx}: year={item['year']}, text={item['text'][:80]}..., source_url={item['source_url']}")
+        log(f"Item {idx}: year={item['year']}, text={item['text'][:80]}..., image_url={item.get('image_url', 'N/A')}")
     log(f"Total items: {len(items)}")
     log(f"===========================================================\n")
     return {"ok": True, "items": items, "endpoint": url}

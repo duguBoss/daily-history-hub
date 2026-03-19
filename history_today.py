@@ -643,7 +643,7 @@ def fetch_history_dot_com(target_date: dt.date) -> dict[str, Any]:
 
 EXTRACT_HISTORY_DOT_COM_PROMPT = """You are a data extraction assistant. Extract historical events from the provided text collected from history.com this-day-in-history page.
 
-For each event, extract: year, event description, and the image URL that appears immediately AFTER the event description (in markdown format like ![Image 14]())).
+For each event, extract: year, event description, and the image URL that appears immediately AFTER the event description (in markdown format like ![alt text](image-url)).
 
 Return a JSON array where each element has exactly this structure:
 [
@@ -655,7 +655,7 @@ Return a JSON array where each element has exactly this structure:
 ]
 
 Rules:
-1. ONLY extract images that appear DIRECTLY after the event description in the raw text (markdown format like ![Image 14]())
+1. ONLY extract images that appear DIRECTLY after the event description in the raw text (markdown format like ![alt text](image-url))
 2. Do NOT randomly assign images - each image must be associated with the event it follows
 3. Extract the direct image URL from the markdown format (e.g., extract "https://example.com/image.jpg" from "![Image 14](https://example.com/image.jpg)")
 4. Only extract events (not births/deaths unless they are historically significant)

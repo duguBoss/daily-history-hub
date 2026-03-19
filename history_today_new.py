@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import argparse
 import datetime as dt
@@ -1417,9 +1417,11 @@ def build_generated_cover_prompt(article: dict[str, Any], merged_items: list[dic
     title = normalize_text(article.get("title", ""))
     summary = normalize_text(article.get("summary", ""))
     return (
-        f"Historical 'This Day in History' magazine cover theme, date: {target_date.isoformat()}."
-        f"Title theme: {title}. Summary: {summary}. Key events: {highlights_text}."
-        "16:9 horizontal composition, documentary feel, historical sense, magazine cover quality, restrained lighting, realistic details."
+        "请生成一张“历史上的今天”专题封面图。"
+        f"日期：{target_date.isoformat()}。"
+        f"标题主题：{title}。摘要：{summary}。重点事件：{highlights_text}。"
+        "画面要求：16:9 横版构图，纪实感、历史感、杂志封面气质，光影克制，细节真实，氛围有张力。"
+        "不要出现任何文字、数字、水印、logo。"
     )
 
 
@@ -1752,3 +1754,4 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+

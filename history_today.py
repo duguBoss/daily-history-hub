@@ -635,6 +635,8 @@ def fetch_history_dot_com(target_date: dt.date) -> dict[str, Any]:
         if not raw_text:
             return {"ok": False, "items": [], "endpoint": url, "error": "Empty response from jina.ai"}
 
+        log(f"\n================ History.com Raw Fetched Text (first 500 chars) ================\n{raw_text[:500]}\n...\n================================================================================\n")
+
         items = extract_history_dot_com_with_gemini(raw_text, target_date)
         return {"ok": bool(items), "items": items, "endpoint": url, "error": "" if items else "No items parsed"}
     except Exception as exc:
@@ -730,6 +732,11 @@ def extract_history_dot_com_with_gemini(raw_text: str, target_date: dt.date) -> 
             "source_url": f"https://www.history.com/this-day-in-history/{MONTH_NAMES[target_date.month].lower()}-{target_date.day}",
             "pages": [],
         })
+
+    log(f"\n================ History.com Extracted Items ================")
+    for idx, item in enumerate(items):
+        log(f"Item {idx}: year={item['year']}, text={item['text'][:50]}..., image_url={item['image_url']}")
+    log(f"===========================================================\n")
 
     return items
 

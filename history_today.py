@@ -648,9 +648,10 @@ EXTRACT_HISTORY_DOT_COM_PROMPT = """You are a data extraction assistant. Extract
 The raw text contains a lot of navigation content at the top. Focus on the "Also on This Day in History" section near the bottom.
 
 Event format in the raw text:
-- Events appear as: [YEAR Event description...](URL) duration read
-- Some events have an inline image AFTER them: [YEAR Event description...](URL) duration read ! [text](image-url)
-- The image always comes after the duration read text, preceded by !
+- Events appear as links with year: [1865 Battle of Bentonville begins...](URL) 1:46 m read
+- Some events have an inline image AFTER the duration text: [1916 First U.S. air combat...](URL) 1:26 m read ! [text](image-url)
+- The image URL in the raw text looks like: https://res.cloudinary.com/aenetworks/image/upload/...
+- Images are NOT always present - only extract if they directly follow an event
 
 For each event, extract: year, event description, and the image URL that appears after the event (if any).
 
@@ -665,10 +666,10 @@ Return a JSON array where each element has exactly this structure:
 
 Rules:
 1. Focus on the "Also on This Day in History" section at the bottom of the content
-2. Extract the YEAR (number at start of event text)
-3. Extract the event description (text after year, before the link)
-4. If there is an image URL after "! [" in the same event block, extract it; otherwise set to empty string ""
-5. Do NOT randomly assign images - each image must be visually associated with its event
+2. Extract the YEAR (4-digit number at start of each event)
+3. Extract the event description (text between year and the URL)
+4. If "! [" appears after an event with a cloudinary.com URL, extract that image URL
+5. Do NOT randomly assign images - each image must be directly associated with its event
 6. Only extract events (not births/deaths)
 7. Filter out China-related content, political events, wars, conflicts
 8. Return ONLY valid JSON, no markdown, no explanation

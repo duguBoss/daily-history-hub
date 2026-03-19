@@ -643,7 +643,9 @@ def fetch_history_dot_com(target_date: dt.date) -> dict[str, Any]:
         return {"ok": False, "items": [], "endpoint": url, "error": str(exc)}
 
 
-EXTRACT_HISTORY_DOT_COM_PROMPT = """You are a data extraction assistant. Extract historical events from the provided text collected from history.com this-day-in-history page.
+EXTRACT_HISTORY_DOT_COM_PROMPT = """You are a data extraction assistant. Extract historical events from the provided text collected from history.com this-day-in-history page via jina.ai.
+
+The raw text contains metadata headers like "Title:", "URL Source:", "Markdown Content:". You must FIRST locate the main event content section (after "Markdown Content:" header), then extract events from that section only.
 
 For each event, extract: year, event description, and the image URL that appears immediately AFTER the event description (in markdown format like ![alt text](image-url)).
 
@@ -657,15 +659,16 @@ Return a JSON array where each element has exactly this structure:
 ]
 
 Rules:
-1. ONLY extract images that appear DIRECTLY after the event description in the raw text (markdown format like ![alt text](image-url))
-2. Do NOT randomly assign images - each image must be associated with the event it follows
-3. Extract the direct image URL from the markdown format (e.g., extract "https://example.com/image.jpg" from "![Image 14](https://example.com/image.jpg)")
-4. Only extract events (not births/deaths unless they are historically significant)
-5. Filter out China-related content, political events, wars, conflicts
-6. Combine related events into coherent descriptions
-7. If multiple events share the same year, combine them into one entry
-8. If an event has no image following it, set image_url to empty string ""
-9. Return ONLY valid JSON, no markdown, no explanation
+1. FIRST find the "Markdown Content:" section, then extract events ONLY from that section
+2. ONLY extract images that appear DIRECTLY after the event description in the raw text (markdown format like ![alt text](image-url))
+3. Do NOT randomly assign images - each image must be associated with the event it follows
+4. Extract the direct image URL from the markdown format (e.g., extract "https://example.com/image.jpg" from "![Image 14](https://example.com/image.jpg)")
+5. Only extract events (not births/deaths unless they are historically significant)
+6. Filter out China-related content, political events, wars, conflicts
+7. Combine related events into coherent descriptions
+8. If multiple events share the same year, combine them into one entry
+9. If an event has no image following it, set image_url to empty string ""
+10. Return ONLY valid JSON, no markdown, no explanation
 
 Target date: {target_date}
 
@@ -705,7 +708,15 @@ def extract_history_dot_com_with_gemini(raw_text: str, target_date: dt.date) -> 
     try:
         parsed = json.loads(text)
     except json.JSONDecodeError as e:
-        raise RuntimeError(f"Gemini output is not valid JSON: {e}")
+        log(f"JSON parse error: {e}, attempting to extract JSON from text...")
+        json_match = re.search(r'\[.*\]', text, re.DOTALL)
+        if json_match:
+            try:
+                parsed = json.loads(json_match.group(0))
+            except Exception:
+                raise RuntimeError(f"Gemini output is not valid JSON and could not extract JSON array: {e}")
+        else:
+            raise RuntimeError(f"Gemini output is not valid JSON: {e}")
 
     if not isinstance(parsed, list):
         raise RuntimeError(f"Expected JSON array from Gemini, got {type(parsed)}")

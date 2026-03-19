@@ -32,6 +32,7 @@ SOURCE_BRITANNICA = "britannica"
 SOURCE_WIKIMEDIA = "wikimedia"
 SOURCE_DAYINHISTORY = "dayinhistory"
 SOURCE_API_NINJAS = "api_ninjas"
+SOURCE_HISTORY_DOT_COM = "history_dot_com"
 UNSPLASH_SEARCH_URL = "https://api.unsplash.com/search/photos"
 OPENVERSE_IMAGES_URL = "https://api.openverse.org/v1/images/"
 COMMONS_API_URL = "https://commons.wikimedia.org/w/api.php"
@@ -617,6 +618,117 @@ def fetch_api_ninjas(target_date: dt.date) -> dict[str, Any]:
         if item["text"] and not is_china_related_item(item):
             items.append(item)
     return {"ok": True, "items": items, "endpoint": url}
+
+
+def fetch_history_dot_com(target_date: dt.date) -> dict[str, Any]:
+    month_name = MONTH_NAMES[target_date.month].lower()
+    url = f"https://r.jina.ai/https://www.history.com/this-day-in-history/{month_name}-{target_date.day}"
+    headers = {
+        "Accept": "text/plain",
+        "User-Agent": build_user_agent(),
+        "x-target-url": f"https://www.history.com/this-day-in-history/{month_name}-{target_date.day}",
+    }
+    try:
+        response = requests.get(url, headers=headers, timeout=REQUEST_TIMEOUT)
+        response.raise_for_status()
+        raw_text = response.text.strip()
+        if not raw_text:
+            return {"ok": False, "items": [], "endpoint": url, "error": "Empty response from jina.ai"}
+
+        items = extract_history_dot_com_with_gemini(raw_text, target_date)
+        return {"ok": bool(items), "items": items, "endpoint": url, "error": "" if items else "No items parsed"}
+    except Exception as exc:
+        return {"ok": False, "items": [], "endpoint": url, "error": str(exc)}
+
+
+EXTRACT_HISTORY_DOT_COM_PROMPT = """You are a data extraction assistant. Extract historical events from the provided text collected from history.com this-day-in-history page.
+
+For each event, extract: year, event description, and any associated image URL if available.
+
+Return a JSON array where each element has exactly this structure:
+[
+  {
+    "year": "year string",
+    "text": "event description",
+    "image_url": "image URL or empty string"
+  }
+]
+
+Rules:
+1. Only extract events (not births/deaths unless they are historically significant)
+2. Filter out China-related content, political events, wars, conflicts
+3. Combine related events into coherent descriptions
+4. If multiple events share the same year, combine them into one entry
+5. image_url should be the direct image URL if available, otherwise empty string
+6. Return ONLY valid JSON, no markdown, no explanation
+
+Target date: {target_date}
+
+Raw content to extract from:
+{raw_text}"""
+
+
+def extract_history_dot_com_with_gemini(raw_text: str, target_date: dt.date) -> list[dict[str, Any]]:
+    api_key = os.environ.get("GEMINI_API_KEY")
+    if not api_key:
+        raise ValueError("Missing GEMINI_API_KEY")
+
+    prompt = EXTRACT_HISTORY_DOT_COM_PROMPT.format(target_date=target_date.isoformat(), raw_text=raw_text)
+
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/{PRIMARY_GEMINI_MODEL}:generateContent"
+    response = requests.post(
+        url,
+        headers={"Content-Type": "application/json", "x-goog-api-key": api_key},
+        json={
+            "contents": [{"parts": [{"text": prompt}]}],
+            "generationConfig": {"temperature": 0.3, "responseMimeType": "application/json"},
+        },
+        timeout=REQUEST_TIMEOUT,
+    )
+    response.raise_for_status()
+    payload = response.json()
+    candidates = payload.get("candidates") or []
+    if not candidates:
+        raise RuntimeError(f"Gemini returned no candidates: {payload}")
+    parts = ((candidates[0].get("content") or {}).get("parts")) or []
+    text = "".join(part.get("text", "") for part in parts).strip()
+    if not text:
+        raise RuntimeError(f"Gemini returned empty text: {payload}")
+
+    log(f"\n================ History.com Gemini Extraction Raw Output ================\n{text}\n==================================================================\n")
+
+    try:
+        parsed = json.loads(text)
+    except json.JSONDecodeError as e:
+        raise RuntimeError(f"Gemini output is not valid JSON: {e}")
+
+    if not isinstance(parsed, list):
+        raise RuntimeError(f"Expected JSON array from Gemini, got {type(parsed)}")
+
+    items: list[dict[str, Any]] = []
+    for entry in parsed:
+        if not isinstance(entry, dict):
+            continue
+        year = entry.get("year", "")
+        text_val = entry.get("text", "")
+        image_url = entry.get("image_url", "") or ""
+
+        if not text_val or not year:
+            continue
+        if is_china_related_text(text_val):
+            continue
+
+        items.append({
+            "source": SOURCE_HISTORY_DOT_COM,
+            "category": "events",
+            "year": year,
+            "text": normalize_text(text_val),
+            "image_url": image_url,
+            "source_url": f"https://www.history.com/this-day-in-history/{MONTH_NAMES[target_date.month].lower()}-{target_date.day}",
+            "pages": [],
+        })
+
+    return items
 
 
 def infer_confidence(item: dict[str, Any]) -> str:
@@ -1595,6 +1707,7 @@ def main() -> None:
         {"name": "Wikimedia On this day", **fetch_wikimedia(args.lang, target_date)},
         {"name": "Day in History", **fetch_dayinhistory(target_date)},
         {"name": "API Ninjas Historical Events", **fetch_api_ninjas(target_date)},
+        {"name": "History.com This Day in History", **fetch_history_dot_com(target_date)},
     ]
     merged_items = merge_items(source_results, args.limit)
     if not merged_items:

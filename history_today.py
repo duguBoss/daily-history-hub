@@ -617,6 +617,11 @@ def fetch_api_ninjas(target_date: dt.date) -> dict[str, Any]:
         }
         if item["text"] and not is_china_related_item(item):
             items.append(item)
+    log(f"\n================ API Ninjas Extracted Items ================")
+    for idx, item in enumerate(items):
+        log(f"Item {idx}: year={item['year']}, text={item['text'][:80]}..., source_url={item['source_url']}")
+    log(f"Total items: {len(items)}")
+    log(f"===========================================================\n")
     return {"ok": True, "items": items, "endpoint": url}
 
 
@@ -637,10 +642,12 @@ def fetch_history_dot_com(target_date: dt.date) -> dict[str, Any]:
 
         log(f"\n================ History.com Raw Fetched Text (first 500 chars) ================\n{raw_text[:500]}\n...\n================================================================================\n")
 
-        items = extract_history_dot_com_with_gemini(raw_text, target_date)
-        return {"ok": bool(items), "items": items, "endpoint": url, "error": "" if items else "No items parsed"}
-    except Exception as exc:
-        return {"ok": False, "items": [], "endpoint": url, "error": str(exc)}
+        try:
+            items = extract_history_dot_com_with_gemini(raw_text, target_date)
+            return {"ok": bool(items), "items": items, "endpoint": url, "error": "" if items else "No items parsed"}
+        except Exception as exc:
+            log(f"Error extracting history.com items: {exc}")
+            return {"ok": False, "items": [], "endpoint": url, "error": str(exc)}
 
 
 EXTRACT_HISTORY_DOT_COM_PROMPT = """You are a data extraction assistant. Extract historical events from the provided text collected from history.com this-day-in-history page via jina.ai.

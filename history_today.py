@@ -753,11 +753,15 @@ def extract_history_dot_com_with_gemini(raw_text: str, target_date: dt.date) -> 
         raise RuntimeError(f"Expected JSON array from Gemini, got {type(parsed)}")
 
     log(f"Successfully parsed {len(parsed)} items from Gemini response")
+    log(f"Parsed first item type: {type(parsed[0]) if parsed else 'empty'}")
+    log(f"Parsed first item: {parsed[0] if parsed else 'empty'}")
     log(f"Parsed items: {json.dumps(parsed, ensure_ascii=False)[:500]}...")
 
     items: list[dict[str, Any]] = []
-    for entry in parsed:
+    for idx, entry in enumerate(parsed):
+        log(f"Processing entry {idx}: type={type(entry)}, value={str(entry)[:100]}")
         if not isinstance(entry, dict):
+            log(f"Skipping entry {idx} - not a dict")
             continue
         year = entry.get("year", "")
         text_val = entry.get("text", "")

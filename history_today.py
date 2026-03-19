@@ -645,9 +645,14 @@ def fetch_history_dot_com(target_date: dt.date) -> dict[str, Any]:
 
 EXTRACT_HISTORY_DOT_COM_PROMPT = """You are a data extraction assistant. Extract historical events from the provided text collected from history.com this-day-in-history page via jina.ai.
 
-The raw text contains metadata headers like "Title:", "URL Source:", "Markdown Content:". You must FIRST locate the main event content section (after "Markdown Content:" header), then extract events from that section only.
+The raw text contains a lot of navigation content at the top. Focus on the "Also on This Day in History" section near the bottom.
 
-For each event, extract: year, event description, and the image URL that appears immediately AFTER the event description (in markdown format like ![alt text](image-url)).
+Event format in the raw text:
+- Events appear as: [YEAR Event description...](URL) duration read
+- Some events have an inline image AFTER them: [YEAR Event description...](URL) duration read ! [text](image-url)
+- The image always comes after the duration read text, preceded by !
+
+For each event, extract: year, event description, and the image URL that appears after the event (if any).
 
 Return a JSON array where each element has exactly this structure:
 [
@@ -659,16 +664,14 @@ Return a JSON array where each element has exactly this structure:
 ]
 
 Rules:
-1. FIRST find the "Markdown Content:" section, then extract events ONLY from that section
-2. ONLY extract images that appear DIRECTLY after the event description in the raw text (markdown format like ![alt text](image-url))
-3. Do NOT randomly assign images - each image must be associated with the event it follows
-4. Extract the direct image URL from the markdown format (e.g., extract "https://example.com/image.jpg" from "![Image 14](https://example.com/image.jpg)")
-5. Only extract events (not births/deaths unless they are historically significant)
-6. Filter out China-related content, political events, wars, conflicts
-7. Combine related events into coherent descriptions
-8. If multiple events share the same year, combine them into one entry
-9. If an event has no image following it, set image_url to empty string ""
-10. Return ONLY valid JSON, no markdown, no explanation
+1. Focus on the "Also on This Day in History" section at the bottom of the content
+2. Extract the YEAR (number at start of event text)
+3. Extract the event description (text after year, before the link)
+4. If there is an image URL after "! [" in the same event block, extract it; otherwise set to empty string ""
+5. Do NOT randomly assign images - each image must be visually associated with its event
+6. Only extract events (not births/deaths)
+7. Filter out China-related content, political events, wars, conflicts
+8. Return ONLY valid JSON, no markdown, no explanation
 
 Target date: {target_date}
 

@@ -699,7 +699,7 @@ def extract_history_dot_com_with_gemini(raw_text: str, target_date: dt.date) -> 
             "contents": [{"parts": [{"text": prompt}]}],
             "generationConfig": {"temperature": 0.3, "responseMimeType": "application/json"},
         },
-        timeout=REQUEST_TIMEOUT,
+        timeout=REQUEST_TIMEOUT * 3,
     )
     response.raise_for_status()
     payload = response.json()
@@ -721,8 +721,22 @@ def extract_history_dot_com_with_gemini(raw_text: str, target_date: dt.date) -> 
         if json_match:
             try:
                 parsed = json.loads(json_match.group(0))
-            except Exception:
-                raise RuntimeError(f"Gemini output is not valid JSON and could not extract JSON array: {e}")
+            except Exception as inner_e:
+                log(f"Failed to extract JSON array: {inner_e}, trying to find JSON objects...")
+                objects = re.findall(r'\{[^{}]*"year"[^{}]*"text"[^{}]*"image_url"[^{}]*\}', text, re.DOTALL)
+                if objects:
+                    parsed = []
+                    for obj in objects:
+                        try:
+                            parsed.append(json.loads(obj))
+                        except:
+                            pass
+                    if parsed:
+                        log(f"Successfully extracted {len(parsed)} objects from text")
+                    else:
+                        raise RuntimeError(f"Gemini output is not valid JSON and could not extract JSON array: {e}")
+                else:
+                    raise RuntimeError(f"Gemini output is not valid JSON and could not extract JSON array: {e}")
         else:
             raise RuntimeError(f"Gemini output is not valid JSON: {e}")
 

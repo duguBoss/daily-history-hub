@@ -643,24 +643,27 @@ def fetch_history_dot_com(target_date: dt.date) -> dict[str, Any]:
 
 EXTRACT_HISTORY_DOT_COM_PROMPT = """You are a data extraction assistant. Extract historical events from the provided text collected from history.com this-day-in-history page.
 
-For each event, extract: year, event description, and any associated image URL if available.
+For each event, extract: year, event description, and the image URL that appears immediately AFTER the event description (in markdown format like ![Image 14]())).
 
 Return a JSON array where each element has exactly this structure:
 [
   {
     "year": "year string",
     "text": "event description",
-    "image_url": "image URL or empty string"
+    "image_url": "direct image URL found after this event, or empty string if none"
   }
 ]
 
 Rules:
-1. Only extract events (not births/deaths unless they are historically significant)
-2. Filter out China-related content, political events, wars, conflicts
-3. Combine related events into coherent descriptions
-4. If multiple events share the same year, combine them into one entry
-5. image_url should be the direct image URL if available, otherwise empty string
-6. Return ONLY valid JSON, no markdown, no explanation
+1. ONLY extract images that appear DIRECTLY after the event description in the raw text (markdown format like ![Image 14]())
+2. Do NOT randomly assign images - each image must be associated with the event it follows
+3. Extract the direct image URL from the markdown format (e.g., extract "https://example.com/image.jpg" from "![Image 14](https://example.com/image.jpg)")
+4. Only extract events (not births/deaths unless they are historically significant)
+5. Filter out China-related content, political events, wars, conflicts
+6. Combine related events into coherent descriptions
+7. If multiple events share the same year, combine them into one entry
+8. If an event has no image following it, set image_url to empty string ""
+9. Return ONLY valid JSON, no markdown, no explanation
 
 Target date: {target_date}
 

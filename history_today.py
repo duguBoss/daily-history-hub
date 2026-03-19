@@ -752,6 +752,9 @@ def extract_history_dot_com_with_gemini(raw_text: str, target_date: dt.date) -> 
     if not isinstance(parsed, list):
         raise RuntimeError(f"Expected JSON array from Gemini, got {type(parsed)}")
 
+    log(f"Successfully parsed {len(parsed)} items from Gemini response")
+    log(f"Parsed items: {json.dumps(parsed, ensure_ascii=False)[:500]}...")
+
     items: list[dict[str, Any]] = []
     for entry in parsed:
         if not isinstance(entry, dict):

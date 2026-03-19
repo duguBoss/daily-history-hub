@@ -648,6 +648,8 @@ def fetch_history_dot_com(target_date: dt.date) -> dict[str, Any]:
         except Exception as exc:
             log(f"Error extracting history.com items: {exc}")
             return {"ok": False, "items": [], "endpoint": url, "error": str(exc)}
+    except Exception as exc:
+        return {"ok": False, "items": [], "endpoint": url, "error": str(exc)}
 
 
 EXTRACT_HISTORY_DOT_COM_PROMPT = """You are a data extraction assistant. Extract historical events from the provided text collected from history.com this-day-in-history page via jina.ai.

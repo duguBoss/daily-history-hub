@@ -48,6 +48,36 @@ SEED_TERMS = [
     "augustus caesar",
 ]
 
+BLOCKED_PERSON_PATTERNS = [
+    "mao zedong",
+    "xi jinping",
+    "deng xiaoping",
+    "chiang kai-shek",
+    "sun yat-sen",
+    "zhou enlai",
+    "liu shaoqi",
+    "jiang zemin",
+    "hu jintao",
+    "毛泽东",
+    "习近平",
+    "邓小平",
+    "蒋介石",
+    "孙中山",
+    "周恩来",
+    "刘少奇",
+    "江泽民",
+    "胡锦涛",
+    "communist party of china",
+    "chinese communist party",
+    "ccp",
+    "cpc",
+    "people's republic of china",
+    "prc",
+    "中华人民共和国",
+    "中共",
+    "中国共产党",
+]
+
 
 def log(message: str) -> None:
     print(f"[historical_figure] {message}", flush=True)
@@ -80,6 +110,22 @@ def normalize_text(text: str) -> str:
 
 def normalize_name(name: str) -> str:
     return normalize_text(name).lower()
+
+
+def person_search_blob(person: dict[str, Any]) -> str:
+    info = person.get("info", "")
+    info_text = info if isinstance(info, str) else json.dumps(info, ensure_ascii=False)
+    fields = [
+        str(person.get("name", "")),
+        str(person.get("title", "")),
+        info_text,
+    ]
+    return normalize_text(" ".join(fields)).lower()
+
+
+def is_blocked_person(person: dict[str, Any]) -> bool:
+    blob = person_search_blob(person)
+    return any(pattern in blob for pattern in BLOCKED_PERSON_PATTERNS)
 
 
 def github_asset_url(relative_path: Path) -> str:
@@ -161,6 +207,8 @@ def build_candidate_pool(seed_limit: int, api_key: str) -> list[dict[str, Any]]:
             continue
 
         for item in items:
+            if is_blocked_person(item):
+                continue
             name = normalize_name(str(item.get("name", "")))
             if not name or name in seen_names:
                 continue
@@ -170,18 +218,35 @@ def build_candidate_pool(seed_limit: int, api_key: str) -> list[dict[str, Any]]:
     return candidates
 
 
-def choose_daily_figure(candidates: list[dict[str, Any]], seen_names: set[str], target_date: dt.date) -> dict[str, Any]:
+def choose_daily_figure(
+    candidates: list[dict[str, Any]],
+    seen_names: set[str],
+    target_date: dt.date,
+    start_offset: int = 0,
+) -> dict[str, Any]:
     if not candidates:
         raise RuntimeError("No candidate figures available from API Ninjas.")
 
-    unseen = [item for item in candidates if normalize_name(str(item.get("name", ""))) not in seen_names]
+    filtered = [item for item in candidates if not is_blocked_person(item)]
+    if not filtered:
+        raise RuntimeError("No candidate figures available after blocked-person filtering.")
+
+    unseen = [item for item in filtered if normalize_name(str(item.get("name", ""))) not in seen_names]
     if not unseen:
         log("All candidates have been used. Resetting seen list for a new cycle.")
         seen_names.clear()
-        unseen = candidates
+        unseen = filtered
 
-    index = target_date.toordinal() % len(unseen)
-    return unseen[index]
+    start = (target_date.toordinal() + start_offset) % len(unseen)
+    for shift in range(len(unseen)):
+        candidate = unseen[(start + shift) % len(unseen)]
+        if is_blocked_person(candidate):
+            continue
+        name = normalize_name(str(candidate.get("name", "")))
+        if not name or name in seen_names:
+            continue
+        return candidate
+    raise RuntimeError("No eligible unseen figure found after retry attempts.")
 
 
 def get_wikidata_image_url(name: str) -> str:
@@ -370,12 +435,29 @@ def main() -> None:
     candidates = build_candidate_pool(args.seed_limit, api_ninjas_key)
     log(f"Candidate figures fetched: {len(candidates)}")
 
-    selected = choose_daily_figure(candidates, seen_names, target_date)
-    selected_name = normalize_text(str(selected.get("name", "")))
-    if not selected_name:
-        raise RuntimeError("Selected figure has empty name")
+    selected: dict[str, Any] | None = None
+    detail: dict[str, Any] | None = None
+    total_attempts = max(1, len(candidates))
+    for attempt in range(total_attempts):
+        candidate = choose_daily_figure(candidates, seen_names, target_date, start_offset=attempt)
+        candidate_name = normalize_text(str(candidate.get("name", "")))
+        if not candidate_name:
+            continue
 
-    detail = fetch_person_detail(selected_name, api_ninjas_key)
+        candidate_detail = fetch_person_detail(candidate_name, api_ninjas_key)
+        if is_blocked_person(candidate_detail):
+            log(f"Skipped blocked figure candidate: {candidate_name}")
+            seen_names.add(normalize_name(candidate_name))
+            continue
+
+        selected = candidate
+        detail = candidate_detail
+        break
+
+    if not selected or not detail:
+        raise RuntimeError("Unable to select an eligible non-duplicate figure after retries.")
+
+    selected_name = normalize_text(str(selected.get("name", "")))
     log(f"Selected figure: {selected_name}")
 
     avatar_source_url = get_wikidata_image_url(selected_name)

@@ -722,7 +722,11 @@ def extract_history_dot_com_with_gemini(raw_text: str, target_date: dt.date) -> 
     if not text:
         raise RuntimeError(f"Gemini returned empty text: {payload}")
 
-    log(f"\n================ History.com Gemini Extraction Raw Output ================\n{text}\n==================================================================\n")
+    log(f"\n================ History.com Gemini Extraction Raw Output ================")
+    log(f"Text length: {len(text)} characters")
+    log(f"Full text content:")
+    log(text)
+    log("==================================================================\n")
 
     try:
         parsed = json.loads(text)
@@ -759,14 +763,12 @@ def extract_history_dot_com_with_gemini(raw_text: str, target_date: dt.date) -> 
     if not parsed:
         log("Parsed list is empty")
         return []
-    log(f"Parsed first item type: {type(parsed[0])}, value: {str(parsed[0])[:200]}")
-    if not isinstance(parsed[0], dict):
-        log(f"First item is not a dict, attempting to extract from raw text...")
-        raise RuntimeError(f"First item is not a dict: {type(parsed[0])}")
+    log(f"Parsed first item type: {type(parsed[0])}, value: {str(parsed[0])}")
+    log(f"All parsed items: {json.dumps(parsed, ensure_ascii=False)}")
 
     items: list[dict[str, Any]] = []
     for idx, entry in enumerate(parsed):
-        log(f"Processing entry {idx}: type={type(entry)}, value={str(entry)[:100]}")
+        log(f"Processing entry {idx}: type={type(entry)}, value={str(entry)}")
         if not isinstance(entry, dict):
             log(f"Skipping entry {idx} - not a dict")
             continue

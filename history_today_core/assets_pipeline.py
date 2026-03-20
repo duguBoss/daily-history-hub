@@ -8,7 +8,7 @@ from pathlib import Path
 from .assets_common import github_asset_url
 from .common import log
 from .constants import ASSET_ROOT
-from .images_generation import generate_minimax_cover, generate_minimax_event_image
+from .images_generation import MiniMaxUsageLimitError, generate_minimax_cover, generate_minimax_event_image
 
 def download_assets(
     target_date: dt.date,
@@ -25,6 +25,7 @@ def download_assets(
     cover_url = ""
     image_urls: list[str] = []
     seen: set[str] = set()
+    quota_exhausted = False
 
     def to_github_url(local_path_str: str) -> str:
         local_path = Path(local_path_str)
@@ -41,9 +42,18 @@ def download_assets(
                 if cover_url:
                     seen.add(cover_url)
                     log(f"Cover URL: {cover_url}")
+            except MiniMaxUsageLimitError as exc:
+                quota_exhausted = True
+                log(f"Cover generation stopped: {exc}")
             except Exception as exc:
                 log(f"Cover generation failed: {exc}")
                 cover_url = ""
+
+    if quota_exhausted:
+        log("MiniMax quota exhausted, skipping all event image generation for this run")
+        log(f"Generated asset summary: cover={'yes' if cover_url else 'no'}, event_images={len(image_urls)}")
+        all_images = ([cover_url] if cover_url else []) + image_urls
+        return all_images, image_urls
 
     generated = 0
     for source_index, item in enumerate(merged_items, start=1):
@@ -56,6 +66,9 @@ def download_assets(
         log(f"Generating event image {event_index}/4 from merged item #{source_index}")
         try:
             image_path = generate_minimax_event_image(item, target_date, target_dir, event_index)
+        except MiniMaxUsageLimitError as exc:
+            log(f"Event image generation halted due to quota exhaustion: {exc}")
+            break
         except Exception as exc:
             log(
                 f"Event image generation failed for item {source_index} "

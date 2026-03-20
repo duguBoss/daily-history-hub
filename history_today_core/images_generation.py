@@ -12,6 +12,10 @@ from .common import build_user_agent, log, normalize_text
 from .constants import MINIMAX_IMAGE_API_URL, REQUEST_TIMEOUT
 
 
+class MiniMaxUsageLimitError(RuntimeError):
+    pass
+
+
 def _minimax_request_timeout() -> int:
     return int(os.environ.get("MINIMAX_REQUEST_TIMEOUT_SECONDS", str(REQUEST_TIMEOUT * 10)))
 
@@ -159,6 +163,14 @@ def generate_minimax_image(prompt: str, file_path: Path, aspect_ratio: str = "16
     )
     response.raise_for_status()
     result = response.json()
+    base_resp = result.get("base_resp") or {}
+    status_code = base_resp.get("status_code")
+    status_msg = str(base_resp.get("status_msg", "") or "")
+    if status_code not in (0, "0", None):
+        error_message = f"MiniMax API error {status_code}: {status_msg or result}"
+        if str(status_code) == "2056" or "usage limit exceeded" in status_msg.lower():
+            raise MiniMaxUsageLimitError(error_message)
+        raise RuntimeError(error_message)
 
     base64_images = _extract_image_base64_from_response(result)
     if base64_images:

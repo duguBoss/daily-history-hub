@@ -436,17 +436,43 @@ def fetch_britannica(target_date: dt.date) -> dict[str, Any]:
     log(f"{'='*80}")
     try:
         with sync_playwright() as p:
-            browser = p.chromium.launch(headless=True)
+            browser = p.chromium.launch(
+                headless=True,
+                args=[
+                    "--disable-blink-features=AutomationControlled",
+                    "--disable-dev-shm-usage",
+                    "--no-sandbox",
+                    "--disable-setuid-sandbox",
+                    "--disable-web-security",
+                ],
+            )
             context = browser.new_context(
                 user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36",
                 locale="en-US",
+                timezone_id="America/New_York",
+                viewport={"width": 1920, "height": 1080},
+                extra_http_headers={
+                    "Accept-Language": "en-US,en;q=0.9",
+                    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
+                },
             )
             page = context.new_page()
             log(f"    → Navigating to Britannica (Playwright, timeout=60s)...")
             page.goto(url, wait_until="domcontentloaded", timeout=60000)
-            log(f"    → Waiting for .event-item selector (timeout=15s)...")
-            page.wait_for_selector(".event-item", timeout=15000)
-            html_content = page.content()
+            page.wait_for_timeout(3000)
+            selectors = [".event-item", ".on-this-day-item", "[data-testid='event-item']", "article.event"]
+            html_content = None
+            for selector in selectors:
+                try:
+                    page.wait_for_selector(selector, timeout=3000)
+                    html_content = page.content()
+                    log(f"    ✓ Found content with selector: {selector}")
+                    break
+                except:
+                    log(f"    ⚠ Selector '{selector}' not found, trying next...")
+            if not html_content:
+                log(f"    ⚠ No specific selector found, using page content anyway")
+                html_content = page.content()
             browser.close()
             log(f"    ✓ Fetched {len(html_content)} chars via Playwright")
     except Exception as exc:

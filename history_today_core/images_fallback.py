@@ -40,20 +40,11 @@ def _wrap_lines(text: str, max_chars: int, max_lines: int) -> list[str]:
 
 def _render_svg_to_png(svg: str, svg_path: Path, png_path: Path) -> str:
     svg_path.write_text(svg, encoding="utf-8")
-    from playwright.sync_api import sync_playwright
-
-    with sync_playwright() as playwright:
-        browser = playwright.chromium.launch(headless=True, args=["--no-sandbox"])
-        page = browser.new_page()
-        page.set_content(
-            "<!doctype html><html><head><meta charset='utf-8'></head>"
-            "<body style='margin:0;background:transparent;'>"
-            f"{svg}"
-            "</body></html>",
-            wait_until="load",
-        )
-        page.locator("svg").first.screenshot(path=str(png_path))
-        browser.close()
+    try:
+        import cairosvg
+    except ImportError as exc:
+        raise RuntimeError("Missing cairosvg dependency for SVG to PNG fallback conversion.") from exc
+    cairosvg.svg2png(bytestring=svg.encode("utf-8"), write_to=str(png_path))
     return str(png_path)
 
 

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 import datetime as dt
 import os
 from pathlib import Path
@@ -19,6 +20,10 @@ def _minimax_download_timeout() -> int:
     return int(os.environ.get("MINIMAX_DOWNLOAD_TIMEOUT_SECONDS", str(REQUEST_TIMEOUT * 4)))
 
 
+def _minimax_response_format() -> str:
+    return os.environ.get("MINIMAX_RESPONSE_FORMAT", "base64").strip().lower()
+
+
 def _extract_image_urls_from_response(result: dict[str, Any]) -> list[str]:
     data = result.get("data")
     urls: list[str] = []
@@ -27,7 +32,14 @@ def _extract_image_urls_from_response(result: dict[str, Any]) -> list[str]:
     if isinstance(data, dict):
         image_urls = data.get("image_urls")
         if isinstance(image_urls, list):
-            urls.extend([u for u in image_urls if isinstance(u, str) and u.strip()])
+            for u in image_urls:
+                if isinstance(u, str) and u.strip():
+                    urls.append(u)
+                elif isinstance(u, dict):
+                    for key in ("url", "image_url"):
+                        v = u.get(key)
+                        if isinstance(v, str) and v.strip():
+                            urls.append(v)
         single_url = data.get("url")
         if isinstance(single_url, str) and single_url.strip():
             urls.append(single_url)
@@ -48,6 +60,40 @@ def _extract_image_urls_from_response(result: dict[str, Any]) -> list[str]:
             seen.add(url)
             deduped.append(url)
     return deduped
+
+
+def _extract_image_base64_from_response(result: dict[str, Any]) -> list[str]:
+    data = result.get("data")
+    blobs: list[str] = []
+    if not isinstance(data, dict):
+        return blobs
+
+    # Try common explicit keys first.
+    for key in ("image_base64", "image_base64s", "base64", "b64_json"):
+        value = data.get(key)
+        if isinstance(value, str) and value.strip():
+            blobs.append(value)
+        elif isinstance(value, list):
+            blobs.extend([v for v in value if isinstance(v, str) and v.strip()])
+
+    # Fallback: collect any field containing "base64".
+    for key, value in data.items():
+        if "base64" not in str(key).lower():
+            continue
+        if isinstance(value, str) and value.strip():
+            blobs.append(value)
+        elif isinstance(value, list):
+            blobs.extend([v for v in value if isinstance(v, str) and v.strip()])
+
+    deduped: list[str] = []
+    seen: set[str] = set()
+    for blob in blobs:
+        cleaned = blob.split(",", 1)[1] if blob.startswith("data:") and "," in blob else blob
+        if cleaned not in seen:
+            seen.add(cleaned)
+            deduped.append(cleaned)
+    return deduped
+
 
 def build_generated_cover_prompt(article: dict[str, Any], merged_items: list[dict[str, Any]], target_date: dt.date) -> str:
     highlights = []
@@ -89,13 +135,15 @@ def generate_minimax_image(prompt: str, file_path: Path, aspect_ratio: str = "16
     log(f"Prompt: {prompt[:200]}")
     req_timeout = _minimax_request_timeout()
     dl_timeout = _minimax_download_timeout()
+    response_format = _minimax_response_format()
     log(f"MiniMax timeouts: request={req_timeout}s, download={dl_timeout}s")
+    log(f"MiniMax response_format: {response_format}")
 
     payload = {
         "model": "image-01",
         "prompt": prompt,
         "aspect_ratio": aspect_ratio,
-        "response_format": "url",
+        "response_format": response_format if response_format in {"url", "base64"} else "base64",
         "n": 1,
         "prompt_optimizer": True,
     }
@@ -111,6 +159,12 @@ def generate_minimax_image(prompt: str, file_path: Path, aspect_ratio: str = "16
     )
     response.raise_for_status()
     result = response.json()
+
+    base64_images = _extract_image_base64_from_response(result)
+    if base64_images:
+        file_path.write_bytes(base64.b64decode(base64_images[0]))
+        log(f"Saved generated image from base64: {file_path}")
+        return str(file_path)
 
     image_urls = _extract_image_urls_from_response(result)
     image_url = image_urls[0] if image_urls else ""

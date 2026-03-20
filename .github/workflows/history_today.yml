@@ -32,6 +32,7 @@ jobs:
 
       - name: Run scraper
         env:
+          PYTHONUNBUFFERED: "1"
           GITHUB_REPOSITORY: ${{ github.repository }}
           GITHUB_REF_NAME: ${{ github.ref_name }}
           WIKIMEDIA_CONTACT: https://github.com/${{ github.repository }}
@@ -40,6 +41,9 @@ jobs:
           API_NINJAS_API_KEY: ${{ secrets.API_NINJAS_API_KEY }}
           UNSPLASH_ACCESS_KEY: ${{ secrets.UNSPLASH_ACCESS_KEY }}
           MINIMAX_API_KEY: ${{ secrets.MINIMAX_API_KEY }}
+          MINIMAX_REQUEST_TIMEOUT_SECONDS: "120"
+          MINIMAX_DOWNLOAD_TIMEOUT_SECONDS: "60"
+          IMAGE_GENERATION_BUDGET_SECONDS: "300"
         run: python history_today.py --output-dir output
 
       - name: Inspect generated files

@@ -48,4 +48,4 @@ def to_simplified(text: str) -> str:
 
 
 def log(message: str) -> None:
-    print(f"[history_today] {message}")
+    print(f"[history_today] {message}", flush=True)

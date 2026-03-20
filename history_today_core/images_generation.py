@@ -11,6 +11,14 @@ from .common import build_user_agent, log, normalize_text
 from .constants import MINIMAX_IMAGE_API_URL, REQUEST_TIMEOUT
 
 
+def _minimax_request_timeout() -> int:
+    return int(os.environ.get("MINIMAX_REQUEST_TIMEOUT_SECONDS", str(REQUEST_TIMEOUT * 10)))
+
+
+def _minimax_download_timeout() -> int:
+    return int(os.environ.get("MINIMAX_DOWNLOAD_TIMEOUT_SECONDS", str(REQUEST_TIMEOUT * 4)))
+
+
 def _extract_image_urls_from_response(result: dict[str, Any]) -> list[str]:
     data = result.get("data")
     urls: list[str] = []
@@ -79,6 +87,9 @@ def generate_minimax_image(prompt: str, file_path: Path, aspect_ratio: str = "16
 
     log(f"Generating MiniMax image: {file_path.name}")
     log(f"Prompt: {prompt[:200]}")
+    req_timeout = _minimax_request_timeout()
+    dl_timeout = _minimax_download_timeout()
+    log(f"MiniMax timeouts: request={req_timeout}s, download={dl_timeout}s")
 
     payload = {
         "model": "image-01",
@@ -96,7 +107,7 @@ def generate_minimax_image(prompt: str, file_path: Path, aspect_ratio: str = "16
             "Content-Type": "application/json",
         },
         json=payload,
-        timeout=REQUEST_TIMEOUT * 10,
+        timeout=req_timeout,
     )
     response.raise_for_status()
     result = response.json()
@@ -107,7 +118,7 @@ def generate_minimax_image(prompt: str, file_path: Path, aspect_ratio: str = "16
         raise RuntimeError(f"MiniMax returned no image URL: {result}")
 
     log(f"Generated image URL: {image_url}")
-    download_response = requests.get(image_url, headers={"User-Agent": build_user_agent()}, timeout=REQUEST_TIMEOUT * 4)
+    download_response = requests.get(image_url, headers={"User-Agent": build_user_agent()}, timeout=dl_timeout)
     download_response.raise_for_status()
     file_path.write_bytes(download_response.content)
     log(f"Saved generated image: {file_path}")

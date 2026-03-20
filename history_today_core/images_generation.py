@@ -10,6 +10,37 @@ import requests
 from .common import build_user_agent, log, normalize_text
 from .constants import MINIMAX_IMAGE_API_URL, REQUEST_TIMEOUT
 
+
+def _extract_image_urls_from_response(result: dict[str, Any]) -> list[str]:
+    data = result.get("data")
+    urls: list[str] = []
+
+    # Current documented shape: {"data": {"image_urls": ["..."]}}
+    if isinstance(data, dict):
+        image_urls = data.get("image_urls")
+        if isinstance(image_urls, list):
+            urls.extend([u for u in image_urls if isinstance(u, str) and u.strip()])
+        single_url = data.get("url")
+        if isinstance(single_url, str) and single_url.strip():
+            urls.append(single_url)
+
+    # Backward-compatible shape used in previous implementation assumptions.
+    if isinstance(data, list):
+        for item in data:
+            if isinstance(item, dict):
+                url = item.get("url")
+                if isinstance(url, str) and url.strip():
+                    urls.append(url)
+
+    # Deduplicate while keeping order.
+    deduped: list[str] = []
+    seen: set[str] = set()
+    for url in urls:
+        if url not in seen:
+            seen.add(url)
+            deduped.append(url)
+    return deduped
+
 def build_generated_cover_prompt(article: dict[str, Any], merged_items: list[dict[str, Any]], target_date: dt.date) -> str:
     highlights = []
     for item in merged_items[:3]:
@@ -70,7 +101,8 @@ def generate_minimax_image(prompt: str, file_path: Path, aspect_ratio: str = "16
     response.raise_for_status()
     result = response.json()
 
-    image_url = result.get("data", [{}])[0].get("url", "")
+    image_urls = _extract_image_urls_from_response(result)
+    image_url = image_urls[0] if image_urls else ""
     if not image_url:
         raise RuntimeError(f"MiniMax returned no image URL: {result}")
 

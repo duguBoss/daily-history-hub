@@ -4,10 +4,12 @@ import datetime as dt
 import os
 import time
 from pathlib import Path
+from typing import Any
 
 from .assets_common import github_asset_url
 from .common import log
 from .constants import ASSET_ROOT
+from .images_fallback import generate_fallback_cover_image, generate_fallback_event_image
 from .images_generation import MiniMaxUsageLimitError, generate_minimax_cover, generate_minimax_event_image
 
 def download_assets(
@@ -47,13 +49,19 @@ def download_assets(
                 log(f"Cover generation stopped: {exc}")
             except Exception as exc:
                 log(f"Cover generation failed: {exc}")
-                cover_url = ""
+            if not cover_url:
+                try:
+                    fallback_cover = generate_fallback_cover_image(article, merged_items, target_date, target_dir)
+                    cover_url = to_github_url(fallback_cover)
+                    if cover_url:
+                        seen.add(cover_url)
+                        log(f"Fallback cover URL: {cover_url}")
+                except Exception as fallback_exc:
+                    log(f"Fallback cover generation failed: {fallback_exc}")
+                    cover_url = ""
 
     if quota_exhausted:
-        log("MiniMax quota exhausted, skipping all event image generation for this run")
-        log(f"Generated asset summary: cover={'yes' if cover_url else 'no'}, event_images={len(image_urls)}")
-        all_images = ([cover_url] if cover_url else []) + image_urls
-        return all_images, image_urls
+        log("MiniMax quota exhausted; switching event images to local SVG fallback mode")
 
     generated = 0
     for source_index, item in enumerate(merged_items, start=1):
@@ -64,17 +72,30 @@ def download_assets(
             break
         event_index = generated + 1
         log(f"Generating event image {event_index}/4 from merged item #{source_index}")
+        image_path = ""
         try:
-            image_path = generate_minimax_event_image(item, target_date, target_dir, event_index)
+            if quota_exhausted:
+                image_path = generate_fallback_event_image(item, target_date, target_dir, event_index)
+            else:
+                image_path = generate_minimax_event_image(item, target_date, target_dir, event_index)
         except MiniMaxUsageLimitError as exc:
-            log(f"Event image generation halted due to quota exhaustion: {exc}")
-            break
+            quota_exhausted = True
+            log(f"Event image generation halted due to quota exhaustion: {exc}; switching to fallback")
+            try:
+                image_path = generate_fallback_event_image(item, target_date, target_dir, event_index)
+            except Exception as fallback_exc:
+                log(f"Fallback event image failed after quota exhaustion: {fallback_exc}")
+                continue
         except Exception as exc:
             log(
                 f"Event image generation failed for item {source_index} "
                 f"({item.get('year')} {item.get('text', '')[:80]}): {exc}"
             )
-            continue
+            try:
+                image_path = generate_fallback_event_image(item, target_date, target_dir, event_index)
+            except Exception as fallback_exc:
+                log(f"Fallback event image failed for item {source_index}: {fallback_exc}")
+                continue
         if not image_path:
             continue
         github_url = to_github_url(image_path)

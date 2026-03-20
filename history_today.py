@@ -438,8 +438,8 @@ def fetch_britannica(target_date: dt.date) -> dict[str, Any]:
                 locale="en-US",
             )
             page = context.new_page()
-            page.goto(url, wait_until="networkidle", timeout=REQUEST_TIMEOUT * 1000)
-            page.wait_for_selector(".event-item", timeout=10000)
+            page.goto(url, wait_until="domcontentloaded", timeout=60000)
+            page.wait_for_selector(".event-item", timeout=15000)
             html_content = page.content()
             browser.close()
     except Exception as exc:
@@ -752,12 +752,17 @@ def extract_history_dot_com_with_gemini(raw_text: str, target_date: dt.date) -> 
             raise RuntimeError(f"Gemini output is not valid JSON: {e}")
 
     if not isinstance(parsed, list):
+        log(f"Parsed is not a list, type={type(parsed)}, value={str(parsed)[:200]}")
         raise RuntimeError(f"Expected JSON array from Gemini, got {type(parsed)}")
 
     log(f"Successfully parsed {len(parsed)} items from Gemini response")
-    log(f"Parsed first item type: {type(parsed[0]) if parsed else 'empty'}")
-    log(f"Parsed first item: {parsed[0] if parsed else 'empty'}")
-    log(f"Parsed items: {json.dumps(parsed, ensure_ascii=False)[:500]}...")
+    if not parsed:
+        log("Parsed list is empty")
+        return []
+    log(f"Parsed first item type: {type(parsed[0])}, value: {str(parsed[0])[:200]}")
+    if not isinstance(parsed[0], dict):
+        log(f"First item is not a dict, attempting to extract from raw text...")
+        raise RuntimeError(f"First item is not a dict: {type(parsed[0])}")
 
     items: list[dict[str, Any]] = []
     for idx, entry in enumerate(parsed):

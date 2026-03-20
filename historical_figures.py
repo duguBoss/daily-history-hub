@@ -56,7 +56,7 @@ def log(message: str) -> None:
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Generate one daily historical figure with avatar and Gemini intro.")
     parser.add_argument("--date", help="Target date in YYYY-MM-DD format.")
-    parser.add_argument("--output-root", default=str(DEFAULT_OUTPUT_ROOT), help="Root folder for output JSON by date.")
+    parser.add_argument("--output-root", default=str(DEFAULT_OUTPUT_ROOT), help="Root folder for output JSON.")
     parser.add_argument("--asset-root", default=str(DEFAULT_ASSET_ROOT), help="Root folder for generated assets by date.")
     parser.add_argument("--seed-limit", type=int, default=len(SEED_TERMS), help="How many seed terms to query.")
     return parser.parse_args()
@@ -95,6 +95,17 @@ def cleanup_daily_dirs(root: Path, target_date: dt.date) -> None:
     for child in root.iterdir():
         if child.is_dir() and child.name != keep:
             shutil.rmtree(child, ignore_errors=True)
+
+
+def cleanup_output_json_files(output_root: Path, target_date: dt.date) -> None:
+    output_root.mkdir(parents=True, exist_ok=True)
+    keep_name = f"History_Figure_{target_date.isoformat()}.json"
+    for child in output_root.glob("History_Figure_*.json"):
+        if child.name != keep_name:
+            try:
+                child.unlink()
+            except Exception:
+                pass
 
 
 def load_seen_names(state_file: Path) -> set[str]:
@@ -240,9 +251,17 @@ def build_gemini_prompt(person: dict[str, Any], target_date: dt.date) -> str:
     info_text = normalize_text(info if isinstance(info, str) else json.dumps(info, ensure_ascii=False))
 
     return (
-        "请根据下面人物资料，生成微信公众号风格中文内容。"
-        "只返回 JSON 对象，字段为 title、summary、content_text。"
-        "要求：title 不超过 30 字；summary 80-120 字；content_text 为 4 段，每段 100-180 字，客观准确。"
+        "请根据下面人物资料，生成更适合微信公众号推荐分发的中文内容。"
+        "只返回 JSON 对象，字段必须是 title、summary、content_text。"
+        "写作要求："
+        "1) title 18-28字，突出反差/转折/价值，不做夸张标题党；"
+        "2) summary 90-130字，清楚告诉读者“为什么值得看”；"
+        "3) content_text 共5段："
+        "首段用强钩子切入并点明时代意义；"
+        "中间3段给出关键经历、代表贡献、争议或局限（有信息密度）；"
+        "末段给出今天的启发并抛出一个互动问题；"
+        "4) 语言自然、有画面感、可读性强，避免空泛套话；"
+        "5) 保持事实严谨，不编造信息。"
         f"\n\n目标日期：{target_date.isoformat()}"
         f"\n人物姓名：{name}"
         f"\n人物标签：{title}"
@@ -255,18 +274,25 @@ def fallback_profile(person: dict[str, Any], target_date: dt.date) -> dict[str, 
     title = normalize_text(str(person.get("title", "历史人物"))) or "历史人物"
     info = person.get("info", "")
     info_text = normalize_text(info if isinstance(info, str) else json.dumps(info, ensure_ascii=False))
-    summary = f"{target_date.month}月{target_date.day}日的历史人物是{name}。{name}被广泛认为是{title}，其生平与成就对后世产生了深远影响。"
+    summary = (
+        f"{target_date.month}月{target_date.day}日的历史人物是{name}。"
+        f"这位{title}如何在时代压力中做出关键选择，至今仍影响我们的认知方式与行动策略。"
+        "读完你会更清楚：真正改变历史的，往往不是身份，而是判断与执行力。"
+    )
     content = (
-        f"{name}是历史发展进程中具有代表性的{title}。在其所处时代，{name}通过个人实践与社会行动，"
-        "推动了相关领域的重要变化。\n\n"
-        f"从现有资料看，{name}的经历与当时政治、文化和技术环境密切相关。"
-        "其贡献并非孤立事件，而是时代结构与个体能力共同作用的结果。\n\n"
-        f"围绕{name}的研究通常聚焦其关键决策、代表作品或社会影响。"
-        "这些内容构成了理解其历史地位的核心线索。\n\n"
-        f"参考资料摘要：{info_text[:500]}"
+        f"很多人第一次听到{name}，会把他/她简单归类为“{title}”。但真正值得追问的是："
+        "在那个复杂时代，为什么偏偏是他/她做出了后来被历史放大的决定？\n\n"
+        f"从资料来看，{name}并不是在真空中行动。政治结构、社会情绪、技术条件与个人经历交织在一起，"
+        "共同塑造了其关键路径。理解这一层，才能看懂人物背后的时代逻辑。\n\n"
+        f"再看其核心贡献：无论是思想、制度还是作品，{name}都改变了当时人们处理问题的方式。"
+        "这类改变的价值，往往不是一时轰动，而是长期渗透到后续规则和日常生活。\n\n"
+        f"当然，关于{name}也存在争议和局限。把人物放回具体历史语境，既看到成就也看到代价，"
+        "才是更成熟的历史阅读方法。\n\n"
+        f"如果把{name}放到今天，你认为他/她最值得我们借鉴的一条原则是什么？"
+        f"资料摘录：{info_text[:320]}"
     )
     return {
-        "title": f"历史人物：{name}",
+        "title": f"{name}为何改变了历史走向？",
         "summary": summary,
         "content_text": content,
     }
@@ -315,9 +341,9 @@ def generate_profile_with_gemini(person: dict[str, Any], target_date: dt.date) -
         return fallback_profile(person, target_date)
 
 
-def save_payload(payload: dict[str, Any], output_dir: Path, target_date: dt.date) -> Path:
-    output_dir.mkdir(parents=True, exist_ok=True)
-    output_path = output_dir / f"History_Figure_{target_date.isoformat()}.json"
+def save_payload(payload: dict[str, Any], output_root: Path, target_date: dt.date) -> Path:
+    output_root.mkdir(parents=True, exist_ok=True)
+    output_path = output_root / f"History_Figure_{target_date.isoformat()}.json"
     output_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
     return output_path
 
@@ -334,12 +360,10 @@ def main() -> None:
     asset_root = Path(args.asset_root)
     state_file = output_root / STATE_FILE_NAME
 
-    cleanup_daily_dirs(output_root, target_date)
+    cleanup_output_json_files(output_root, target_date)
     cleanup_daily_dirs(asset_root, target_date)
 
-    output_day_dir = output_root / target_date.isoformat()
     asset_day_dir = asset_root / target_date.isoformat()
-    output_day_dir.mkdir(parents=True, exist_ok=True)
     asset_day_dir.mkdir(parents=True, exist_ok=True)
 
     seen_names = load_seen_names(state_file)
@@ -378,7 +402,7 @@ def main() -> None:
         "wechat_html": html,
     }
 
-    output_path = save_payload(payload, output_day_dir, target_date)
+    output_path = save_payload(payload, output_root, target_date)
     seen_names.add(normalize_name(selected_name))
     save_seen_names(state_file, seen_names)
 

@@ -711,9 +711,17 @@ def fetch_history_dot_com(target_date: dt.date) -> dict[str, Any]:
             return {"ok": False, "items": [], "endpoint": url, "error": "Empty response from jina.ai"}
 
         log(f"    ✓ Fetched {len(raw_text)} chars from jina.ai")
-        log(f"\n--- History.com Raw Content (first 800 chars) ---")
-        log(raw_text[:800])
-        log(f"... (truncated, total {len(raw_text)} chars)")
+
+        also_on_this_day_marker = "Also on This Day in History"
+        if also_on_this_day_marker in raw_text:
+            raw_text = raw_text[raw_text.index(also_on_this_day_marker):]
+            log(f"    → Extracted '{also_on_this_day_marker}' section ({len(raw_text)} chars)")
+        else:
+            log(f"    ⚠ '{also_on_this_day_marker}' marker not found, using full content")
+
+        log(f"\n--- History.com Content for Gemini (first 1000 chars) ---")
+        log(raw_text[:1000])
+        log(f"... (truncated for display, total {len(raw_text)} chars)")
         log(f"-------------------------------------------\n")
 
         try:

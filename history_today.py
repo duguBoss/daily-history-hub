@@ -39,7 +39,7 @@ SOURCE_HISTORY_DOT_COM = "history_dot_com"
 UNSPLASH_SEARCH_URL = "https://api.unsplash.com/search/photos"
 OPENVERSE_IMAGES_URL = "https://api.openverse.org/v1/images/"
 COMMONS_API_URL = "https://commons.wikimedia.org/w/api.php"
-Z_IMAGE_TURBO_BASE_URL = "https://mrfakename-z-image-turbo.hf.space"
+MINIMAX_IMAGE_API_URL = "https://api.minimaxi.com/v1/image_generation"
 MONTH_NAMES = {
     1: "january",
     2: "february",
@@ -1587,107 +1587,40 @@ def build_generated_event_prompt(item: dict[str, Any], target_date: dt.date) -> 
     )
 
 
-def gradio_headers() -> dict[str, str]:
-    headers = {"Content-Type": "application/json"}
-    api_key = os.environ.get("HF_API_TOKEN")
-    if api_key:
-        headers["Authorization"] = f"Bearer {api_key}"
-    return headers
+def generate_minimax_image(prompt: str, file_path: Path, aspect_ratio: str = "16:9") -> str:
+    api_key = os.environ.get("MINIMAX_API_KEY")
+    if not api_key:
+        raise ValueError("Missing MINIMAX_API_KEY")
 
+    log(f"Generating MiniMax image: {file_path.name}")
+    log(f"Prompt: {prompt[:200]}")
 
-def extract_gradio_event_id(payload: dict[str, Any]) -> str:
-    for key in ("event_id", "eventId"):
-        value = payload.get(key)
-        if isinstance(value, str) and value.strip():
-            return value
-    raise RuntimeError(f"Gradio response missing event id: {payload}")
+    payload = {
+        "model": "image-01",
+        "prompt": prompt,
+        "aspect_ratio": aspect_ratio,
+        "response_format": "url",
+        "n": 1,
+        "prompt_optimizer": True,
+    }
 
-
-def parse_gradio_result_text(text: str) -> str:
-    def extract_url(value: Any) -> str:
-        if isinstance(value, str) and value.strip():
-            stripped = value.strip()
-            if stripped.startswith("http://") or stripped.startswith("https://"):
-                return stripped
-            if stripped.startswith("/gradio_api/file="):
-                return stripped
-            if stripped.startswith("/tmp/gradio/"):
-                return stripped
-            return ""
-        if isinstance(value, dict):
-            for key in ("url", "path"):
-                candidate = extract_url(value.get(key))
-                if candidate:
-                    return candidate
-        return ""
-
-    data_lines: list[str] = []
-    for raw_line in text.splitlines():
-        line = raw_line.strip()
-        if not line.startswith("data:"):
-            continue
-        data_lines.append(line[5:].strip())
-    for chunk in reversed(data_lines):
-        try:
-            payload = json.loads(chunk)
-        except Exception:
-            continue
-        if isinstance(payload, list) and payload:
-            for item in payload:
-                candidate = extract_url(item)
-                if candidate:
-                    return candidate
-        if isinstance(payload, dict):
-            candidate = extract_url(payload)
-            if candidate:
-                return candidate
-    raise RuntimeError(f"Unable to parse Gradio generation result: {text[:800]}")
-
-
-def join_hf_space_url(path_or_url: str) -> str:
-    if path_or_url.startswith("http://") or path_or_url.startswith("https://"):
-        return path_or_url
-    if path_or_url.startswith("/tmp/gradio/"):
-        return f"{Z_IMAGE_TURBO_BASE_URL}/gradio_api/file={path_or_url}"
-    if path_or_url.startswith("/"):
-        return f"{Z_IMAGE_TURBO_BASE_URL}{path_or_url}"
-    return f"{Z_IMAGE_TURBO_BASE_URL}/{path_or_url}"
-
-
-def request_gradio_generated_image(prompt: str) -> str:
-    # 彻底解决每次生成同一样图片的问题：给参数注入随机的Seed，而不是写死的42
-    random_seed = random.randint(1, 2147483647)
-    payload = {"data": [prompt, 768, 1344, 9, random_seed, True]}
-    
-    start_response = requests.post(
-        f"{Z_IMAGE_TURBO_BASE_URL}/gradio_api/call/generate_image",
-        headers=gradio_headers(),
+    response = requests.post(
+        MINIMAX_IMAGE_API_URL,
+        headers={
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json",
+        },
         json=payload,
-        timeout=REQUEST_TIMEOUT * 2,
+        timeout=REQUEST_TIMEOUT * 10,
     )
-    if not start_response.ok:
-        body_preview = start_response.text[:600].replace("\n", " ")
-        raise RuntimeError(f"Gradio start request failed: HTTP {start_response.status_code} {body_preview}")
-    event_id = extract_gradio_event_id(start_response.json())
-    log(f"Gradio event id: {event_id} with seed {random_seed}")
-    
-    result_response = requests.get(
-        f"{Z_IMAGE_TURBO_BASE_URL}/gradio_api/call/generate_image/{event_id}",
-        headers=gradio_headers(),
-        timeout=REQUEST_TIMEOUT * 8,
-    )
-    if not result_response.ok:
-        body_preview = result_response.text[:600].replace("\n", " ")
-        raise RuntimeError(f"Gradio result request failed: HTTP {result_response.status_code} {body_preview}")
-    return join_hf_space_url(parse_gradio_result_text(result_response.text))
+    response.raise_for_status()
+    result = response.json()
 
+    image_url = result.get("data", [{}])[0].get("url", "")
+    if not image_url:
+        raise RuntimeError(f"MiniMax returned no image URL: {result}")
 
-def generate_huggingface_image(prompt: str, file_path: Path) -> str:
-    # 彻底去掉复用旧图的检查逻辑，强制重载并覆盖
-    log(f"Generating new image for: {file_path.name}")
-    log(f"Gradio prompt: {prompt[:240]}")
-    image_url = request_gradio_generated_image(prompt)
-    log(f"Generated remote image URL: {image_url}")
+    log(f"Generated image URL: {image_url}")
     download_response = requests.get(image_url, headers={"User-Agent": build_user_agent()}, timeout=REQUEST_TIMEOUT * 4)
     download_response.raise_for_status()
     file_path.write_bytes(download_response.content)
@@ -1695,14 +1628,14 @@ def generate_huggingface_image(prompt: str, file_path: Path) -> str:
     return str(file_path)
 
 
-def generate_huggingface_cover(article: dict[str, Any], merged_items: list[dict[str, Any]], target_date: dt.date, target_dir: Path) -> str:
+def generate_minimax_cover(article: dict[str, Any], merged_items: list[dict[str, Any]], target_date: dt.date, target_dir: Path) -> str:
     prompt = build_generated_cover_prompt(article, merged_items, target_date)
-    return generate_huggingface_image(prompt, target_dir / "hf-cover.png")
+    return generate_minimax_image(prompt, target_dir / "minimax-cover.png")
 
 
-def generate_huggingface_event_image(item: dict[str, Any], target_date: dt.date, target_dir: Path, index: int) -> str:
+def generate_minimax_event_image(item: dict[str, Any], target_date: dt.date, target_dir: Path, index: int) -> str:
     prompt = build_generated_event_prompt(item, target_date)
-    return generate_huggingface_image(prompt, target_dir / f"hf-event-{index:02d}.png")
+    return generate_minimax_image(prompt, target_dir / f"minimax-event-{index:02d}.png", aspect_ratio="3:2")
 
 
 def fetch_unsplash_or_generated_image(
@@ -1717,7 +1650,7 @@ def fetch_unsplash_or_generated_image(
         return download_image(item["image_url"], target_dir)
 
     try:
-        ai_image = generate_huggingface_event_image(item, target_date, target_dir, index)
+        ai_image = generate_minimax_event_image(item, target_date, target_dir, index)
         if ai_image:
             log(f"AI generated image for item {index}: {ai_image}")
             return ai_image
@@ -1768,7 +1701,7 @@ def download_assets(
                 cover_url = ""
         if not cover_url:
             try:
-                cover_url = to_github_url(generate_huggingface_cover(article, merged_items, target_date, target_dir))
+                cover_url = to_github_url(generate_minimax_cover(article, merged_items, target_date, target_dir))
                 if cover_url:
                     seen.add(cover_url)
                     log(f"Cover URL: {cover_url}")

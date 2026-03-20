@@ -430,6 +430,10 @@ def parse_britannica_item(year: str, text_parts: list[str], image_url: str, deta
 
 def fetch_britannica(target_date: dt.date) -> dict[str, Any]:
     url = britannica_date_url(target_date)
+    log(f"\n{'='*80}")
+    log(f"[1] Britannica On This Day")
+    log(f"    URL: {url}")
+    log(f"{'='*80}")
     try:
         with sync_playwright() as p:
             browser = p.chromium.launch(headless=True)
@@ -438,11 +442,15 @@ def fetch_britannica(target_date: dt.date) -> dict[str, Any]:
                 locale="en-US",
             )
             page = context.new_page()
+            log(f"    → Navigating to Britannica (Playwright, timeout=60s)...")
             page.goto(url, wait_until="domcontentloaded", timeout=60000)
+            log(f"    → Waiting for .event-item selector (timeout=15s)...")
             page.wait_for_selector(".event-item", timeout=15000)
             html_content = page.content()
             browser.close()
+            log(f"    ✓ Fetched {len(html_content)} chars via Playwright")
     except Exception as exc:
+        log(f"    ❌ Playwright failed: {exc}")
         return {"ok": False, "items": [], "endpoint": url, "error": f"Playwright error: {exc}"}
 
     lines = html_to_lines(html_content)
@@ -523,9 +531,14 @@ def wikimedia_candidates(lang: str, target_date: dt.date) -> list[tuple[str, dic
 
 
 def fetch_wikimedia(lang: str, target_date: dt.date) -> dict[str, Any]:
+    log(f"\n{'='*80}")
+    log(f"[2] Wikimedia On This Day")
+    log(f"    Lang: {lang}, Date: {target_date.isoformat()}")
+    log(f"{'='*80}")
     last_error: Exception | None = None
-    for url, headers in wikimedia_candidates(lang, target_date):
+    for idx, (url, headers) in enumerate(wikimedia_candidates(lang, target_date), 1):
         try:
+            log(f"    → Trying endpoint {idx}: {url}")
             response = requests.get(url, headers=headers, timeout=REQUEST_TIMEOUT)
             response.raise_for_status()
             payload = response.json()
@@ -543,14 +556,21 @@ def fetch_wikimedia(lang: str, target_date: dt.date) -> dict[str, Any]:
                     }
                     if item["text"] and not is_china_related_item(item):
                         items.append(item)
+            log(f"    ✓ Success: {len(items)} items from {len(payload.get('selected', []) + payload.get('events', []))} entries")
             return {"ok": True, "items": items, "endpoint": url}
         except Exception as exc:
+            log(f"    ⚠ Endpoint {idx} failed: {exc}")
             last_error = exc
+    log(f"    ❌ All endpoints failed")
     return {"ok": False, "items": [], "endpoint": "", "error": str(last_error) if last_error else "unknown"}
 
 
 def fetch_dayinhistory(target_date: dt.date) -> dict[str, Any]:
     month_name = MONTH_NAMES[target_date.month]
+    log(f"\n{'='*80}")
+    log(f"[4] Day in History API")
+    log(f"    Date: {month_name} {target_date.day}")
+    log(f"{'='*80}")
     headers = {"Accept": "application/json", "User-Agent": build_user_agent()}
     items: list[dict[str, Any]] = []
     failures: list[str] = []
@@ -558,6 +578,7 @@ def fetch_dayinhistory(target_date: dt.date) -> dict[str, Any]:
         for base_url in ("https://api.dayinhistory.com/v1", "https://api.dayinhistory.dev/v1"):
             url = f"{base_url}/{category}/{month_name}/{target_date.day}/"
             try:
+                log(f"    → Trying: {url}")
                 response = requests.get(url, headers=headers, timeout=REQUEST_TIMEOUT)
                 response.raise_for_status()
                 payload = response.json()
@@ -585,9 +606,15 @@ def fetch_dayinhistory(target_date: dt.date) -> dict[str, Any]:
                     }
                     if item["text"] and not is_china_related_item(item):
                         items.append(item)
+                log(f"    ✓ {category}: {len(results)} results from {base_url}")
                 break
             except Exception as exc:
                 failures.append(f"{category} via {base_url}: {exc}")
+                log(f"    ⚠ {category}/{base_url}: {exc}")
+    if items:
+        log(f"    ✓ Total: {len(items)} items")
+    else:
+        log(f"    ❌ All endpoints failed")
     return {
         "ok": bool(items),
         "items": items,
@@ -597,34 +624,44 @@ def fetch_dayinhistory(target_date: dt.date) -> dict[str, Any]:
 
 
 def fetch_api_ninjas(target_date: dt.date) -> dict[str, Any]:
+    log(f"\n{'='*80}")
+    log(f"[5] API Ninjas Historical Events")
+    log(f"    Date: {target_date.month}/{target_date.day}")
+    log(f"{'='*80}")
     api_key = os.environ.get("API_NINJAS_API_KEY")
     if not api_key:
+        log(f"    ❌ Missing API_NINJAS_API_KEY")
         return {"ok": False, "items": [], "endpoint": "", "error": "Missing API_NINJAS_API_KEY"}
     url = f"https://api.api-ninjas.com/v1/historicalevents?month={target_date.month}&day={target_date.day}"
-    response = requests.get(
-        url,
-        headers={"X-Api-Key": api_key, "User-Agent": build_user_agent()},
-        timeout=REQUEST_TIMEOUT,
-    )
-    response.raise_for_status()
-    items = []
-    for entry in response.json():
-        item = {
-            "source": SOURCE_API_NINJAS,
-            "category": "events",
-            "year": entry.get("year"),
-            "text": normalize_text(entry.get("event", "")),
-            "source_url": url,
-            "pages": [],
-        }
-        if item["text"] and not is_china_related_item(item):
-            items.append(item)
-    log(f"\n================ API Ninjas Extracted Items ================")
-    for idx, item in enumerate(items):
-        log(f"Item {idx}: year={item['year']}, text={item['text'][:80]}..., image_url={item.get('image_url', 'N/A')}")
-    log(f"Total items: {len(items)}")
-    log(f"===========================================================\n")
-    return {"ok": True, "items": items, "endpoint": url}
+    log(f"    → URL: {url}")
+    try:
+        response = requests.get(
+            url,
+            headers={"X-Api-Key": api_key, "User-Agent": build_user_agent()},
+            timeout=REQUEST_TIMEOUT,
+        )
+        response.raise_for_status()
+        items = []
+        for entry in response.json():
+            item = {
+                "source": SOURCE_API_NINJAS,
+                "category": "events",
+                "year": entry.get("year"),
+                "text": normalize_text(entry.get("event", "")),
+                "source_url": url,
+                "pages": [],
+            }
+            if item["text"] and not is_china_related_item(item):
+                items.append(item)
+        log(f"    ✓ Success: {len(items)} items extracted")
+        if items:
+            log(f"    Sample items:")
+            for idx, item in enumerate(items[:3]):
+                log(f"      [{idx}] {item['year']}: {item['text'][:60]}...")
+        return {"ok": True, "items": items, "endpoint": url}
+    except Exception as exc:
+        log(f"    ❌ Request failed: {exc}")
+        return {"ok": False, "items": [], "endpoint": url, "error": str(exc)}
 
 
 def fetch_history_dot_com(target_date: dt.date) -> dict[str, Any]:
@@ -635,22 +672,33 @@ def fetch_history_dot_com(target_date: dt.date) -> dict[str, Any]:
         "User-Agent": build_user_agent(),
         "x-target-url": f"https://www.history.com/this-day-in-history/{month_name}-{target_date.day}",
     }
+    log(f"\n{'='*80}")
+    log(f"[3] History.com This Day in History")
+    log(f"    URL: {url}")
+    log(f"{'='*80}")
     try:
         response = requests.get(url, headers=headers, timeout=REQUEST_TIMEOUT)
         response.raise_for_status()
         raw_text = response.text.strip()
         if not raw_text:
+            log(f"    ❌ Empty response from jina.ai")
             return {"ok": False, "items": [], "endpoint": url, "error": "Empty response from jina.ai"}
 
-        log(f"\n================ History.com Raw Fetched Text (first 500 chars) ================\n{raw_text[:500]}\n...\n================================================================================\n")
+        log(f"    ✓ Fetched {len(raw_text)} chars from jina.ai")
+        log(f"\n--- History.com Raw Content (first 800 chars) ---")
+        log(raw_text[:800])
+        log(f"... (truncated, total {len(raw_text)} chars)")
+        log(f"-------------------------------------------\n")
 
         try:
             items = extract_history_dot_com_with_gemini(raw_text, target_date)
+            log(f"    ✓ Extracted {len(items)} items via Gemini")
             return {"ok": bool(items), "items": items, "endpoint": url, "error": "" if items else "No items parsed"}
         except Exception as exc:
-            log(f"Error extracting history.com items: {exc}")
+            log(f"    ❌ Gemini extraction failed: {exc}")
             return {"ok": False, "items": [], "endpoint": url, "error": str(exc)}
     except Exception as exc:
+        log(f"    ❌ Request failed: {exc}")
         return {"ok": False, "items": [], "endpoint": url, "error": str(exc)}
 
 

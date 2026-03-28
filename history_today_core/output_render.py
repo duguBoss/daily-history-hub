@@ -47,7 +47,7 @@ def render_wechat_html(title: str, summary: str, content_text: str, all_images: 
     content_html = "".join(parts)
     top_banner = (
         "<img src='https://mmbiz.qpic.cn/mmbiz_gif/3hAJnwuyZuicicZkgJBUCCaricdibomDBrTzXgUR7FJnf11qGIo8nmKt6RxibXrb5s4RFb9UZ9UOHQy7fqQyI377Licw/0?wx_fmt=gif' "
-        "style='width:100%;display:block;'>"
+        "style='width:100%;display:block;margin-bottom:1em;'>"
     )
     bottom_banner = (
         "<img src='https://mmbiz.qpic.cn/mmbiz_gif/3hAJnwuyZuicicZkgJBUCCaricdibomDBrTzk57DCmhVC16o9ILH0Tn1YPEiarfLRRQSVFN2mJdeYibGnBPialPIzvojw/0?wx_fmt=gif' "

@@ -5,7 +5,7 @@ from html import escape
 from pathlib import Path
 from urllib.parse import quote
 
-from .common import normalize_text
+from .common import normalize_text, to_simplified
 
 
 def _clip(text: str, limit: int) -> str:
@@ -15,15 +15,31 @@ def _clip(text: str, limit: int) -> str:
     return cleaned[: max(0, limit - 1)].rstrip() + "..."
 
 
+def _pick_chinese_title(item: dict[str, object]) -> str:
+    detail = item.get("detail") if isinstance(item.get("detail"), dict) else {}
+    description = to_simplified(normalize_text(str((detail or {}).get("description", "") or "")))
+    extract = to_simplified(normalize_text(str((detail or {}).get("extract", "") or "")))
+    return description or extract or "回看这一节点与当日主题的关联。"
+
+
+def _pick_chinese_meta(item: dict[str, object], title_text: str) -> str:
+    detail = item.get("detail") if isinstance(item.get("detail"), dict) else {}
+    extract = to_simplified(normalize_text(str((detail or {}).get("extract", "") or "")))
+    description = to_simplified(normalize_text(str((detail or {}).get("description", "") or "")))
+    candidate = extract or description
+    if candidate == title_text:
+        return "沿着时间线回看这一天在历史中的位置与影响。"
+    return candidate or "沿着时间线回看这一天在历史中的位置与影响。"
+
+
 def _build_timeline_rows(merged_items: list[dict[str, object]]) -> str:
     cards: list[str] = []
     for index, item in enumerate(merged_items, start=1):
         year = escape(_clip(str(item.get("year", "") or "历史"), 12))
-        title = escape(_clip(str(item.get("text", "") or ""), 120))
-        detail = item.get("detail") if isinstance(item.get("detail"), dict) else {}
-        description = normalize_text(str((detail or {}).get("description", "") or ""))
-        extract = normalize_text(str((detail or {}).get("extract", "") or ""))
-        meta = escape(_clip(description or extract or "回看这一节点如何与当日主题互相映照。", 180))
+        title_text = _pick_chinese_title(item)
+        meta_text = _pick_chinese_meta(item, title_text)
+        title = escape(_clip(title_text, 66))
+        meta = escape(_clip(meta_text, 86))
         side_class = "left" if index % 2 else "right"
         cards.append(
             "<article class='timeline-row'>"
@@ -40,8 +56,8 @@ def _build_timeline_rows(merged_items: list[dict[str, object]]) -> str:
 
 
 def _build_cover_html(article: dict[str, object], merged_items: list[dict[str, object]], target_date: dt.date) -> str:
-    title = escape(_clip(str(article.get("title", "") or "历史上的今天"), 34))
-    summary = escape(_clip(str(article.get("summary", "") or ""), 140))
+    title = escape(_clip(to_simplified(str(article.get("title", "") or "历史上的今天")), 34))
+    summary = escape(_clip(to_simplified(str(article.get("summary", "") or "")), 140))
     day_label = f"{target_date.month:02d}.{target_date.day:02d}"
     timeline_rows = _build_timeline_rows(merged_items)
     if not timeline_rows:
@@ -49,7 +65,7 @@ def _build_cover_html(article: dict[str, object], merged_items: list[dict[str, o
             "<article class='timeline-row'>"
             "<div class='timeline-dot'>01</div>"
             "<section class='timeline-card right'>"
-            "<div class='timeline-year'>TODAY</div>"
+            "<div class='timeline-year'>今日</div>"
             "<div class='timeline-divider'></div>"
             "<p class='timeline-title'>回看今天的历史节点与时代回声</p>"
             "<p class='timeline-meta'>当日无可用事件时，使用摘要内容作为时间线兜底展示。</p>"
@@ -62,7 +78,7 @@ def _build_cover_html(article: dict[str, object], merged_items: list[dict[str, o
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>History Today Timeline</title>
+  <title>历史上的今天时间线封面</title>
   <style>
     :root {{
       --ink: #1f2937;
@@ -111,7 +127,7 @@ def _build_cover_html(article: dict[str, object], merged_items: list[dict[str, o
     .eyebrow {{
       font-family: "Segoe UI", "PingFang SC", sans-serif;
       font-size: 22px;
-      letter-spacing: 0.36em;
+      letter-spacing: 0.18em;
       color: #f0d4a5;
       text-transform: uppercase;
     }}
@@ -147,9 +163,8 @@ def _build_cover_html(article: dict[str, object], merged_items: list[dict[str, o
     .kicker {{
       font-family: "Segoe UI", "PingFang SC", sans-serif;
       font-size: 18px;
-      letter-spacing: 0.28em;
+      letter-spacing: 0.18em;
       color: #9a7b4f;
-      text-transform: uppercase;
       margin-bottom: 18px;
     }}
     .hero-title {{
@@ -186,8 +201,7 @@ def _build_cover_html(article: dict[str, object], merged_items: list[dict[str, o
     .timeline-label {{
       font-family: "Segoe UI", "PingFang SC", sans-serif;
       font-size: 22px;
-      letter-spacing: 0.28em;
-      text-transform: uppercase;
+      letter-spacing: 0.16em;
       color: #8b7355;
     }}
     .timeline-caption {{
@@ -255,9 +269,8 @@ def _build_cover_html(article: dict[str, object], merged_items: list[dict[str, o
     .timeline-year {{
       font-family: "Segoe UI", sans-serif;
       font-size: 20px;
-      letter-spacing: 0.20em;
+      letter-spacing: 0.12em;
       color: var(--accent);
-      text-transform: uppercase;
     }}
     .timeline-divider {{
       width: 100%;
@@ -286,7 +299,7 @@ def _build_cover_html(article: dict[str, object], merged_items: list[dict[str, o
       <header class="hero">
         <aside class="hero-aside">
           <div>
-            <div class="eyebrow">History Today</div>
+            <div class="eyebrow">历史上的今天</div>
             <div class="date-block">
               <p class="date">{day_label}</p>
               <div class="subdate">{target_date.year} / {target_date.month:02d} / {target_date.day:02d}</div>
@@ -295,7 +308,7 @@ def _build_cover_html(article: dict[str, object], merged_items: list[dict[str, o
           <div class="hero-note">以时间线方式整理当日节点，用分段、分隔线和留白建立阅读节奏，不把所有内容压成一段。</div>
         </aside>
         <section class="hero-main">
-          <div class="kicker">Chronicle / Timeline Edition</div>
+          <div class="kicker">今日历史时间线</div>
           <h1 class="hero-title">{title}</h1>
           <div class="hero-divider"></div>
           <p class="hero-summary">{summary}</p>
@@ -303,7 +316,7 @@ def _build_cover_html(article: dict[str, object], merged_items: list[dict[str, o
       </header>
       <section class="timeline-wrap">
         <div class="timeline-head">
-          <div class="timeline-label">Event Timeline</div>
+          <div class="timeline-label">事件时间线</div>
           <div class="timeline-caption">按时间线展开今日历史节点。每个节点独立成段，使用年份、分隔线与说明文字分层组织，避免大段内容堆叠。</div>
         </div>
         <section class="timeline">
@@ -355,10 +368,10 @@ def generate_fallback_event_image(
     index: int,
 ) -> str:
     year = escape(_clip(str(item.get("year", "") or "历史"), 20))
-    title = escape(_clip(str(item.get("text", "") or ""), 84))
-    detail = item.get("detail") if isinstance(item.get("detail"), dict) else {}
-    description = normalize_text(str((detail or {}).get("description", "") or ""))
-    meta = escape(_clip(description or "回看这一事件在时间线中的位置。", 160))
+    title_text = _pick_chinese_title(item)
+    meta_text = _pick_chinese_meta(item, title_text)
+    title = escape(_clip(title_text, 84))
+    meta = escape(_clip(meta_text, 160))
     html = f"""<!DOCTYPE html>
 <html lang="zh-CN">
 <head>
@@ -379,8 +392,7 @@ def generate_fallback_event_image(
     .eyebrow {{
       font: 700 20px "Segoe UI", sans-serif;
       color: #a16207;
-      letter-spacing: .2em;
-      text-transform: uppercase;
+      letter-spacing: .12em;
     }}
     .year {{
       margin: 28px 0 12px;
@@ -408,7 +420,7 @@ def generate_fallback_event_image(
 </head>
 <body>
   <section class="card">
-    <div class="eyebrow">Timeline Event #{index:02d} / {target_date.isoformat()}</div>
+    <div class="eyebrow">历史节点 #{index:02d} / {target_date.isoformat()}</div>
     <div class="year">{year}</div>
     <div class="divider"></div>
     <p class="title">{title}</p>

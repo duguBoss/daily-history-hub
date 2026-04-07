@@ -31,6 +31,7 @@ def _render_historical_figure_html(title: str, summary: str, paragraphs: list[st
 
 
 def _render_history_today_html(title: str, summary: str, paragraphs: list[str], cover_url: str) -> str:
+    del title
     parts = [
         "<section style=\"margin:0;background:linear-gradient(180deg,#f3efe7 0%,#faf8f3 34%,#ffffff 100%);color:#1f2937;\">",
     ]
@@ -41,16 +42,17 @@ def _render_history_today_html(title: str, summary: str, paragraphs: list[str], 
     parts.extend(
         [
             "<section style=\"padding:0;\">",
-            "<div style=\"margin:0 0 12px;font-size:12px;letter-spacing:0.16em;text-transform:uppercase;color:#7c6951;\">On This Day</div>",
-            f"<h1 style=\"margin:0 0 14px;font-size:30px;line-height:1.28;color:#111827;font-family:Georgia,'Times New Roman',serif;font-weight:700;\">{title}</h1>",
-            f"<p style=\"margin:0 0 26px;font-size:16px;line-height:1.9;color:#5f6b7a;\">{summary}</p>",
-            "<div style=\"margin:0 0 28px;padding-top:18px;border-top:1px solid rgba(139,115,85,0.22);\"></div>",
+            "<div style=\"margin:0 0 12px;font-size:12px;letter-spacing:0.16em;text-transform:uppercase;color:#7c6951;\">历史时间线</div>",
+            f"<p style=\"margin:0 0 28px;font-size:16px;line-height:1.95;color:#5f6b7a;\">{summary}</p>",
         ]
     )
     for index, paragraph in enumerate(paragraphs):
         first_style = "font-size:18px;color:#202733;" if index == 0 else "font-size:17px;color:#344152;"
         parts.append(
-            f"<p style=\"margin:0 0 22px;line-height:2;{first_style}\">{paragraph}</p>"
+            f"<div style=\"margin:0 0 24px;\">"
+            f"<div style=\"width:100%;height:1px;background:linear-gradient(90deg,rgba(139,115,85,0.22),rgba(139,115,85,0.06));margin:0 0 18px;\"></div>"
+            f"<p style=\"margin:0;line-height:2;{first_style}\">{paragraph}</p>"
+            "</div>"
         )
     parts.append("</section></section>")
     return "".join(parts)

@@ -11,7 +11,7 @@ def _clip(text: str, limit: int) -> str:
     cleaned = normalize_text(text or "")
     if len(cleaned) <= limit:
         return cleaned
-    return cleaned[: max(0, limit - 1)].rstrip() + "…"
+    return cleaned[: max(0, limit - 1)].rstrip() + "..."
 
 
 def _wrap_lines(text: str, max_chars: int, max_lines: int) -> list[str]:
@@ -43,7 +43,8 @@ def _render_svg_to_png(svg: str, svg_path: Path, png_path: Path) -> str:
     try:
         import cairosvg
     except ImportError as exc:
-        raise RuntimeError("Missing cairosvg dependency for SVG to PNG fallback conversion.") from exc
+        del exc
+        return str(svg_path)
     cairosvg.svg2png(bytestring=svg.encode("utf-8"), write_to=str(png_path))
     return str(png_path)
 
@@ -54,53 +55,76 @@ def generate_fallback_cover_image(
     target_date: dt.date,
     target_dir: Path,
 ) -> str:
-    title = _clip(str(article.get("title", "") or "历史上的今天"), 34)
-    summary = _clip(str(article.get("summary", "") or ""), 66)
-    event_lines = []
-    for item in merged_items[:3]:
-        year = str(item.get("year", "")).strip()
+    title = _clip(str(article.get("title", "") or "历史上的今天"), 28)
+    summary = _clip(str(article.get("summary", "") or ""), 88)
+    title_lines = _wrap_lines(title, 12, 2)
+    summary_lines = _wrap_lines(summary, 26, 3)
+
+    while len(title_lines) < 2:
+        title_lines.append("")
+    while len(summary_lines) < 3:
+        summary_lines.append("")
+
+    timeline_blocks: list[str] = []
+    timeline_items = merged_items[:3] or [{"year": target_date.year, "text": "回望今天的历史节点与时代回声"}]
+    start_y = 286
+    step_y = 176
+
+    for idx, item in enumerate(timeline_items):
+        y = start_y + idx * step_y
+        year = _clip(str(item.get("year", "") or "历史"), 10)
         text = _clip(str(item.get("text", "") or ""), 34)
-        if text:
-            event_lines.append(f"{year} · {text}" if year else text)
-    if not event_lines:
-        event_lines.append("精选历史节点，回看时代转折。")
+        detail = item.get("detail") if isinstance(item.get("detail"), dict) else {}
+        description = _clip(str((detail or {}).get("description", "") or ""), 52)
+        text_lines = _wrap_lines(text, 16, 2)
+        desc_lines = _wrap_lines(description, 24, 2)
 
-    lines = _wrap_lines(summary, 30, 2)
-    while len(lines) < 2:
-        lines.append("")
+        while len(text_lines) < 2:
+            text_lines.append("")
+        while len(desc_lines) < 2:
+            desc_lines.append("")
 
-    events_svg = []
-    base_y = 570
-    for idx, line in enumerate(event_lines):
-        events_svg.append(
-            f"<text x='140' y='{base_y + idx * 56}' fill='#7a4e1d' "
-            "font-size='34' font-family='Noto Serif SC, STSong, serif'>"
-            f"{escape(line)}</text>"
+        timeline_blocks.append(
+            f"<circle cx='888' cy='{y}' r='16' fill='#c27c2c'/>"
+            f"<circle cx='888' cy='{y}' r='34' fill='rgba(194,124,44,0.12)'/>"
+            f"<rect x='944' y='{y - 58}' width='500' height='118' rx='20' fill='#fffaf2' stroke='#eadbc5' stroke-width='2'/>"
+            f"<text x='976' y='{y - 14}' fill='#a16207' font-size='28' font-weight='700' font-family='Georgia, Times New Roman, serif'>{escape(year)}</text>"
+            f"<text x='976' y='{y + 18}' fill='#1f2937' font-size='30' font-family='Noto Serif SC, STSong, serif'>{escape(text_lines[0])}</text>"
+            f"<text x='976' y='{y + 52}' fill='#1f2937' font-size='30' font-family='Noto Serif SC, STSong, serif'>{escape(text_lines[1])}</text>"
+            f"<text x='706' y='{y - 10}' text-anchor='end' fill='#7c5a36' font-size='24' font-family='Noto Sans SC, Microsoft YaHei, sans-serif'>{escape(desc_lines[0])}</text>"
+            f"<text x='706' y='{y + 22}' text-anchor='end' fill='#7c5a36' font-size='24' font-family='Noto Sans SC, Microsoft YaHei, sans-serif'>{escape(desc_lines[1])}</text>"
         )
 
     svg = (
         "<svg xmlns='http://www.w3.org/2000/svg' width='1600' height='900' viewBox='0 0 1600 900'>"
         "<defs>"
-        "<linearGradient id='bg' x1='0' y1='0' x2='0' y2='1'>"
-        "<stop offset='0%' stop-color='#f4e2be'/>"
-        "<stop offset='55%' stop-color='#f8edcf'/>"
-        "<stop offset='100%' stop-color='#fffaf0'/>"
+        "<linearGradient id='bg' x1='0' y1='0' x2='1' y2='1'>"
+        "<stop offset='0%' stop-color='#f4eee3'/>"
+        "<stop offset='55%' stop-color='#fbf8f2'/>"
+        "<stop offset='100%' stop-color='#efe3d0'/>"
+        "</linearGradient>"
+        "<linearGradient id='panel' x1='0' y1='0' x2='0' y2='1'>"
+        "<stop offset='0%' stop-color='#fffdf9'/>"
+        "<stop offset='100%' stop-color='#fff8ef'/>"
         "</linearGradient>"
         "</defs>"
         "<rect width='1600' height='900' fill='url(#bg)'/>"
-        "<rect x='70' y='70' width='1460' height='760' rx='24' fill='#fff9ea' stroke='#d8b274' stroke-width='3'/>"
-        f"<text x='140' y='178' fill='#8a5a23' font-size='36' letter-spacing='2' "
-        "font-family='Noto Serif SC, STSong, serif'>历史上的今天 · "
-        f"{escape(target_date.isoformat())}</text>"
-        f"<text x='140' y='276' fill='#2f1b0e' font-size='70' font-weight='700' "
-        "font-family='Noto Serif SC, STSong, serif'>"
-        f"{escape(title)}</text>"
-        f"<text x='140' y='360' fill='#5f3f22' font-size='36' font-family='Noto Serif SC, STSong, serif'>{escape(lines[0])}</text>"
-        f"<text x='140' y='412' fill='#5f3f22' font-size='36' font-family='Noto Serif SC, STSong, serif'>{escape(lines[1])}</text>"
-        "<line x1='140' y1='482' x2='1460' y2='482' stroke='#d9b676' stroke-width='2'/>"
-        "<text x='140' y='534' fill='#8a5a23' font-size='30' letter-spacing='1' "
-        "font-family='Noto Serif SC, STSong, serif'>今日历史看点</text>"
-        f"{''.join(events_svg)}"
+        "<rect x='56' y='56' width='1488' height='788' rx='32' fill='url(#panel)' stroke='#e7d8be' stroke-width='2'/>"
+        "<rect x='96' y='96' width='412' height='708' rx='28' fill='#1f2937'/>"
+        "<text x='136' y='156' fill='#f4d7a5' font-size='24' letter-spacing='4' font-family='Noto Sans SC, Microsoft YaHei, sans-serif'>ON THIS DAY</text>"
+        f"<text x='136' y='212' fill='#ffffff' font-size='54' font-weight='700' font-family='Noto Serif SC, STSong, serif'>{target_date.month} 月 {target_date.day} 日</text>"
+        f"<text x='136' y='304' fill='#ffffff' font-size='58' font-weight='700' font-family='Noto Serif SC, STSong, serif'>{escape(title_lines[0])}</text>"
+        f"<text x='136' y='374' fill='#ffffff' font-size='58' font-weight='700' font-family='Noto Serif SC, STSong, serif'>{escape(title_lines[1])}</text>"
+        "<line x1='136' y1='424' x2='456' y2='424' stroke='rgba(244,215,165,0.5)' stroke-width='2'/>"
+        f"<text x='136' y='494' fill='#d9dfeb' font-size='28' font-family='Noto Sans SC, Microsoft YaHei, sans-serif'>{escape(summary_lines[0])}</text>"
+        f"<text x='136' y='534' fill='#d9dfeb' font-size='28' font-family='Noto Sans SC, Microsoft YaHei, sans-serif'>{escape(summary_lines[1])}</text>"
+        f"<text x='136' y='574' fill='#d9dfeb' font-size='28' font-family='Noto Sans SC, Microsoft YaHei, sans-serif'>{escape(summary_lines[2])}</text>"
+        "<rect x='136' y='646' width='188' height='54' rx='27' fill='#f4d7a5'/>"
+        "<text x='230' y='681' text-anchor='middle' fill='#1f2937' font-size='22' font-weight='700' font-family='Noto Sans SC, Microsoft YaHei, sans-serif'>时间轴精选</text>"
+        "<text x='136' y='752' fill='#f4d7a5' font-size='22' letter-spacing='2' font-family='Noto Sans SC, Microsoft YaHei, sans-serif'>DAILY HISTORY HUB</text>"
+        "<line x1='888' y1='200' x2='888' y2='708' stroke='#d8c6ab' stroke-width='4'/>"
+        "<text x='944' y='160' fill='#8b7355' font-size='24' letter-spacing='3' font-family='Noto Sans SC, Microsoft YaHei, sans-serif'>TIMELINE</text>"
+        f"{''.join(timeline_blocks)}"
         "</svg>"
     )
 
@@ -139,8 +163,7 @@ def generate_fallback_event_image(
         "</defs>"
         "<rect width='1200' height='800' fill='url(#evbg)'/>"
         "<rect x='52' y='52' width='1096' height='696' rx='20' fill='#fff9ec' stroke='#d9b676' stroke-width='2'/>"
-        f"<text x='96' y='126' fill='#8a5a23' font-size='30' font-family='Noto Serif SC, STSong, serif'>"
-        f"历史节点 #{index:02d} · {escape(target_date.isoformat())}</text>"
+        f"<text x='96' y='126' fill='#8a5a23' font-size='30' font-family='Noto Serif SC, STSong, serif'>历史节点 #{index:02d} · {escape(target_date.isoformat())}</text>"
         f"<text x='96' y='206' fill='#3a2310' font-size='64' font-weight='700' font-family='Noto Serif SC, STSong, serif'>{escape(year)}</text>"
         f"<text x='96' y='294' fill='#4a2d16' font-size='44' font-family='Noto Serif SC, STSong, serif'>{escape(main_lines[0])}</text>"
         f"<text x='96' y='350' fill='#4a2d16' font-size='44' font-family='Noto Serif SC, STSong, serif'>{escape(main_lines[1])}</text>"

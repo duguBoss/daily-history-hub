@@ -10,7 +10,7 @@ from .assets_common import github_asset_url
 from .common import log
 from .constants import ASSET_ROOT
 from .images_fallback import generate_fallback_cover_image, generate_fallback_event_image
-from .images_generation import MiniMaxUsageLimitError, generate_minimax_cover, generate_minimax_event_image
+from .images_generation import MiniMaxUsageLimitError, generate_minimax_event_image
 
 def download_assets(
     target_date: dt.date,
@@ -42,15 +42,12 @@ def download_assets(
             log("Image generation budget reached before cover generation, skipping cover")
         else:
             try:
-                cover_url = to_github_url(generate_minimax_cover(article, merged_items, target_date, target_dir))
+                cover_url = to_github_url(generate_fallback_cover_image(article, merged_items, target_date, target_dir))
                 if cover_url:
                     seen.add(cover_url)
-                    log(f"Cover URL: {cover_url}")
-            except MiniMaxUsageLimitError as exc:
-                quota_exhausted = True
-                log(f"Cover generation stopped: {exc}")
+                    log(f"Timeline cover URL: {cover_url}")
             except Exception as exc:
-                log(f"Cover generation failed: {exc}")
+                log(f"Timeline cover generation failed: {exc}")
             if not cover_url:
                 try:
                     fallback_cover = generate_fallback_cover_image(article, merged_items, target_date, target_dir)

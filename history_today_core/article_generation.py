@@ -33,19 +33,20 @@ def build_gemini_prompt(target_date: dt.date, merged_items: list[dict[str, Any]]
         "你正在撰写一篇完整的微信公众号历史文章。\n"
         "硬性要求：\n"
         "1. 全部输出必须是标准简体中文。\n"
-        "2. 严禁输出整句或整段英文；专有名词也要尽量翻译或转述成中文表达。\n"
+        "2. 严禁输出整句或整段英文；专有名词也尽量转写为中文表达。\n"
         "3. 不要提及资料来源、百科、页面、抓取、模型、生成等元信息。\n"
         "4. 文章要像成熟专栏，不要像资料拼接。\n"
         "5. 需要同时输出正文和封面时间线节点，时间线节点必须是纯中文。\n"
         "6. 排除一切中国相关政治、主权、边界、党派、近现代敏感议题。\n"
-        "标题要求：必须是简体中文，32字以内，适合微信公众号传播。\n"
+        "标题要求：必须是简体中文，固定格式为“历史今天：”+标题内容，总长度32字以内，适合微信公众号传播。\n"
         "请只返回 JSON，对象字段必须严格为：title、summary、content_text、timeline_items。\n"
         "其中：\n"
-        "- title: 中文标题\n"
+        "- title: 中文标题，且必须以“历史今天：”开头\n"
         "- summary: 80字以内中文摘要\n"
         "- content_text: 至少5段正文，用\\n\\n分隔\n"
-        "- timeline_items: 长度为3的数组，每项都包含 year、title、note 三个字段，全部必须为简体中文，适合直接放进封面时间线。\n"
-        "timeline_items.title 应该是单个历史节点的中文概述；timeline_items.note 应该是对该节点的中文补充说明。\n"
+        "- timeline_items: 长度为3的数组，每项都包含 year、title、note 三个字段，且全部必须为简体中文。\n"
+        "- timeline_items.title: 单个历史节点的中文概述\n"
+        "- timeline_items.note: 对该节点的中文补充说明\n"
         f"目标日期：{target_date.isoformat()}\n"
         f"统计信息：{json.dumps(stats, ensure_ascii=False)}\n"
         f"历史候选事件：{json.dumps(compact_items, ensure_ascii=False)}"
@@ -67,8 +68,18 @@ def _validate_text(value: str, key: str) -> str:
     return value
 
 
+def _normalize_history_title(value: str) -> str:
+    cleaned = to_simplified((value or "").strip())
+    if cleaned.startswith("历史今天："):
+        return cleaned
+    if "：" in cleaned:
+        suffix = cleaned.split("：", 1)[1].strip()
+        return f"历史今天：{suffix}" if suffix else "历史今天：历史节点回望"
+    return f"历史今天：{cleaned}" if cleaned else "历史今天：历史节点回望"
+
+
 def validate_gemini_result(result: dict[str, Any]) -> dict[str, Any]:
-    result["title"] = _validate_text(result.get("title", ""), "title")
+    result["title"] = _normalize_history_title(_validate_text(result.get("title", ""), "title"))
     result["summary"] = _validate_text(result.get("summary", ""), "summary")
     result["content_text"] = _validate_text(result.get("content_text", ""), "content_text")
     if len(result["summary"]) > 80:
@@ -166,7 +177,7 @@ def build_fallback_article(target_date: dt.date, merged_items: list[dict[str, An
     paragraphs.append("这些节点被放在同一条时间线上后，能更清楚地看见历史并不是孤立发生，而是在不同领域里同时推动世界向前。")
     content_text = "\n\n".join(paragraphs)
     return {
-        "title": to_simplified(f"历史上的今天：{target_date.month}月{target_date.day}日留下了哪些回声"),
+        "title": to_simplified(f"历史今天：{target_date.month}月{target_date.day}日留下了哪些回声"),
         "summary": to_simplified("这一天并不单薄，几条历史线索在同一页日历上相互照映。"),
         "content_text": to_simplified(content_text),
         "timeline_items": timeline_items[:3],

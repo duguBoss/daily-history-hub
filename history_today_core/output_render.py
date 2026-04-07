@@ -6,25 +6,26 @@ from pathlib import Path
 from typing import Any
 
 def _render_historical_figure_html(title: str, summary: str, paragraphs: list[str], cover_url: str) -> str:
+    del title
     parts = [
         "<section style=\"margin:0;background:#f7f4ee;color:#1f2937;\">",
     ]
     if cover_url:
         parts.append(
-            f"<div style=\"margin:0 0 24px;\"><img src=\"{cover_url}\" style=\"width:100%;display:block;object-fit:cover;\"></div>"
+            f"<div style=\"margin:0 0 18px;\"><img src=\"{cover_url}\" style=\"width:100%;height:auto;display:block;\"></div>"
         )
     parts.extend(
         [
-            "<section style=\"padding:0;\">",
-            "<div style=\"margin:0 0 10px;font-size:12px;letter-spacing:0.14em;text-transform:uppercase;color:#8b7355;\">Historical Figure</div>",
-            f"<h1 style=\"margin:0 0 16px;font-size:32px;line-height:1.26;color:#18181b;font-family:Georgia,'Times New Roman',serif;font-weight:700;\">{title}</h1>",
-            f"<p style=\"margin:0 0 28px;font-size:16px;line-height:1.9;color:#5b6472;\">{summary}</p>",
-            "<div style=\"width:56px;height:1px;background:#cbbba3;margin:0 0 28px;\"></div>",
+            "<section style=\"padding:0 2px;\">",
+            f"<p style=\"margin:0 0 24px;font-size:16px;line-height:1.95;color:#5b6472;\">{summary}</p>",
         ]
     )
     for paragraph in paragraphs:
         parts.append(
-            f"<p style=\"margin:0 0 22px;font-size:17px;line-height:2;color:#2f3743;\">{paragraph}</p>"
+            "<div style=\"margin:0 0 24px;\">"
+            "<div style=\"width:100%;height:1px;background:linear-gradient(90deg,rgba(139,115,85,0.22),rgba(139,115,85,0.06));margin:0 0 18px;\"></div>"
+            f"<p style=\"margin:0;font-size:17px;line-height:2;color:#2f3743;\">{paragraph}</p>"
+            "</div>"
         )
     parts.append("</section></section>")
     return "".join(parts)

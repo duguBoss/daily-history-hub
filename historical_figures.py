@@ -319,7 +319,7 @@ def build_gemini_prompt(person: dict[str, Any], target_date: dt.date) -> str:
         "请根据下面人物资料，生成更适合微信公众号推荐分发的中文内容。"
         "只返回 JSON 对象，字段必须是 title、summary、content_text。"
         "写作要求："
-        "1) title 18-28字，突出反差/转折/价值，不做夸张标题党；"
+        "1) title 必须以“每日历史人物：”开头，总长度18-28字，突出反差/转折/价值，不做夸张标题党；"
         "2) summary 90-130字，清楚告诉读者“为什么值得看”；"
         "3) content_text 共5段："
         "首段用强钩子切入并点明时代意义；"
@@ -357,10 +357,20 @@ def fallback_profile(person: dict[str, Any], target_date: dt.date) -> dict[str, 
         f"资料摘录：{info_text[:320]}"
     )
     return {
-        "title": f"{name}为何改变了历史走向？",
+        "title": f"每日历史人物：{name}为何改变了历史走向",
         "summary": summary,
         "content_text": content,
     }
+
+
+def normalize_history_figure_title(title: str) -> str:
+    cleaned = normalize_text(title)
+    if cleaned.startswith("每日历史人物："):
+        return cleaned
+    if "：" in cleaned:
+        suffix = cleaned.split("：", 1)[1].strip()
+        return f"每日历史人物：{suffix}" if suffix else "每日历史人物：历史人物回望"
+    return f"每日历史人物：{cleaned}" if cleaned else "每日历史人物：历史人物回望"
 
 
 def generate_profile_with_gemini(person: dict[str, Any], target_date: dt.date) -> dict[str, str]:
@@ -394,7 +404,7 @@ def generate_profile_with_gemini(person: dict[str, Any], target_date: dt.date) -
             raise RuntimeError("Gemini returned empty text")
 
         data = json.loads(text)
-        title = normalize_text(str(data.get("title", "")))
+        title = normalize_history_figure_title(str(data.get("title", "")))
         summary = normalize_text(str(data.get("summary", "")))
         content_text = str(data.get("content_text", "")).strip()
         if not title or not summary or not content_text:

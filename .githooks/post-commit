@@ -1,0 +1,17 @@
+#!/bin/sh
+
+set -eu
+
+branch="$(git symbolic-ref --quiet --short HEAD 2>/dev/null || true)"
+if [ -z "$branch" ]; then
+  exit 0
+fi
+
+remote="${GIT_AUTO_PUSH_REMOTE:-origin}"
+
+if ! git remote get-url "$remote" >/dev/null 2>&1; then
+  exit 0
+fi
+
+echo "[post-commit] pushing ${branch} to ${remote}" >&2
+git push "$remote" "HEAD:${branch}"

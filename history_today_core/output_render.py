@@ -5,46 +5,70 @@ import json
 from pathlib import Path
 from typing import Any
 
-def render_wechat_html(title: str, summary: str, content_text: str, all_images: list[str]) -> str:
-    paragraphs = [paragraph.strip() for paragraph in content_text.split("\n\n") if paragraph.strip()]
-    cover_url = all_images[0] if all_images else ""
-    body_images = all_images[1:] if len(all_images) > 1 else []
+def _render_historical_figure_html(title: str, summary: str, paragraphs: list[str], cover_url: str) -> str:
     parts = [
-        "<section style=\"margin:0;background:linear-gradient(180deg,#f6efe4 0%,#fbf8f2 58%,#ffffff 100%);padding:1px;color:#1f2937;\">",
-        "<section style=\"width:100%;margin:0;\">",
-        "<section style=\"background:rgba(255,255,255,0.92);border:1px solid rgba(148,163,184,0.16);box-shadow:0 12px 28px rgba(15,23,42,0.06);border-radius:18px;overflow:hidden;\">",
+        "<section style=\"margin:0;background:#f7f4ee;color:#1f2937;\">",
     ]
     if cover_url:
         parts.append(
-            f"<div style=\"position:relative;background:#d6d3d1;\"><img src=\"{cover_url}\" style=\"width:100%;aspect-ratio:16/9;object-fit:cover;display:block;\"></div>"
+            f"<div style=\"margin:0 0 24px;\"><img src=\"{cover_url}\" style=\"width:100%;display:block;object-fit:cover;\"></div>"
         )
     parts.extend(
         [
-            "<section style=\"padding:16px 12px 10px;\">",
-            "<div style=\"display:inline-block;padding:4px 10px;border-radius:999px;background:#111827;color:#f9fafb;font-size:11px;letter-spacing:0.08em;text-transform:uppercase;\">History Today</div>",
-            f"<h1 style=\"font-size:29px;line-height:1.22;margin:12px 0 10px;color:#111827;font-family:Georgia,'Times New Roman',serif;\">{title}</h1>",
-            f"<p style=\"font-size:15px;line-height:1.8;color:#475569;margin:0;\">{summary}</p>",
-            "</section>",
-            "<section style=\"padding:0 10px 12px;\">",
+            "<section style=\"padding:0;\">",
+            "<div style=\"margin:0 0 10px;font-size:12px;letter-spacing:0.14em;text-transform:uppercase;color:#8b7355;\">Historical Figure</div>",
+            f"<h1 style=\"margin:0 0 16px;font-size:32px;line-height:1.26;color:#18181b;font-family:Georgia,'Times New Roman',serif;font-weight:700;\">{title}</h1>",
+            f"<p style=\"margin:0 0 28px;font-size:16px;line-height:1.9;color:#5b6472;\">{summary}</p>",
+            "<div style=\"width:56px;height:1px;background:#cbbba3;margin:0 0 28px;\"></div>",
+        ]
+    )
+    for paragraph in paragraphs:
+        parts.append(
+            f"<p style=\"margin:0 0 22px;font-size:17px;line-height:2;color:#2f3743;\">{paragraph}</p>"
+        )
+    parts.append("</section></section>")
+    return "".join(parts)
+
+
+def _render_history_today_html(title: str, summary: str, paragraphs: list[str], cover_url: str) -> str:
+    parts = [
+        "<section style=\"margin:0;background:linear-gradient(180deg,#f3efe7 0%,#faf8f3 34%,#ffffff 100%);color:#1f2937;\">",
+    ]
+    if cover_url:
+        parts.append(
+            f"<div style=\"margin:0 0 22px;\"><img src=\"{cover_url}\" style=\"width:100%;display:block;object-fit:cover;\"></div>"
+        )
+    parts.extend(
+        [
+            "<section style=\"padding:0;\">",
+            "<div style=\"margin:0 0 12px;font-size:12px;letter-spacing:0.16em;text-transform:uppercase;color:#7c6951;\">On This Day</div>",
+            f"<h1 style=\"margin:0 0 14px;font-size:30px;line-height:1.28;color:#111827;font-family:Georgia,'Times New Roman',serif;font-weight:700;\">{title}</h1>",
+            f"<p style=\"margin:0 0 26px;font-size:16px;line-height:1.9;color:#5f6b7a;\">{summary}</p>",
+            "<div style=\"margin:0 0 28px;padding-top:18px;border-top:1px solid rgba(139,115,85,0.22);\"></div>",
         ]
     )
     for index, paragraph in enumerate(paragraphs):
+        first_style = "font-size:18px;color:#202733;" if index == 0 else "font-size:17px;color:#344152;"
         parts.append(
-            f"<div style=\"background:#fffdf8;border:1px solid rgba(226,232,240,0.88);border-radius:16px;padding:14px 12px;margin:0 0 12px;box-shadow:0 6px 16px rgba(15,23,42,0.035);\"><p style=\"font-size:16px;line-height:1.92;margin:0;color:#334155;\">{paragraph}</p></div>"
+            f"<p style=\"margin:0 0 22px;line-height:2;{first_style}\">{paragraph}</p>"
         )
-        if index < len(body_images):
-            parts.append(
-                f"<div style=\"margin:0 0 14px;\"><img src=\"{body_images[index]}\" style=\"width:100%;aspect-ratio:16/9;object-fit:cover;border-radius:16px;display:block;box-shadow:0 10px 24px rgba(15,23,42,0.08);\"></div>"
-            )
-    parts.extend(
-        [
-            "</section>",
-            "</section>",
-            "</section>",
-            "</section>",
-        ]
-    )
-    content_html = "".join(parts)
+    parts.append("</section></section>")
+    return "".join(parts)
+
+
+def render_wechat_html(
+    title: str,
+    summary: str,
+    content_text: str,
+    all_images: list[str],
+    variant: str = "history_today",
+) -> str:
+    paragraphs = [paragraph.strip() for paragraph in content_text.split("\n\n") if paragraph.strip()]
+    cover_url = all_images[0] if all_images else ""
+    if variant == "historical_figure":
+        content_html = _render_historical_figure_html(title, summary, paragraphs, cover_url)
+    else:
+        content_html = _render_history_today_html(title, summary, paragraphs, cover_url)
     top_banner = (
         "<img src='https://mmbiz.qpic.cn/mmbiz_gif/3hAJnwuyZuicicZkgJBUCCaricdibomDBrTzXgUR7FJnf11qGIo8nmKt6RxibXrb5s4RFb9UZ9UOHQy7fqQyI377Licw/0?wx_fmt=gif' "
         "style='width:100%;display:block;margin-bottom:1em;'>"

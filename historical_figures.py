@@ -475,7 +475,13 @@ def main() -> None:
         cover_urls = [github_asset_url(rel.relative_to(Path.cwd()))]
 
     profile = generate_profile_with_gemini(detail, target_date)
-    html = render_wechat_html(profile["title"], profile["summary"], profile["content_text"], cover_urls)
+    html = render_wechat_html(
+        profile["title"],
+        profile["summary"],
+        profile["content_text"],
+        cover_urls,
+        variant="historical_figure",
+    )
 
     payload = {
         "title": profile["title"],

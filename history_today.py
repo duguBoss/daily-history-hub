@@ -59,11 +59,19 @@ def main() -> None:
     log(f"Content (前100字): {article.get('content_text', '')[:100]}...\n")
 
     all_images, image_urls = download_assets(target_date, merged_items, args.lang, article)
-    content_html = render_wechat_html(article["title"], article["summary"], article["content_text"], all_images)
+    del image_urls
+    lead_images = all_images[:1]
+    content_html = render_wechat_html(
+        article["title"],
+        article["summary"],
+        article["content_text"],
+        lead_images,
+        variant="history_today",
+    )
     payload = {
         "title": article["title"],
         "seo_summary": article["summary"],
-        "cover": all_images,
+        "cover": lead_images,
         "wechat_html": content_html,
     }
     json_path = save_outputs(payload, Path(args.output_dir), target_date)

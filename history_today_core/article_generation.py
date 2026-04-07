@@ -12,6 +12,7 @@ from .common import log, to_simplified
 from .constants import FALLBACK_GEMINI_MODEL, PRIMARY_GEMINI_MODEL, REQUEST_TIMEOUT
 from .filters import is_china_related_text
 
+
 def build_gemini_prompt(target_date: dt.date, merged_items: list[dict[str, Any]], stats: dict[str, Any]) -> str:
     compact_items = [
         {
@@ -29,54 +30,63 @@ def build_gemini_prompt(target_date: dt.date, merged_items: list[dict[str, Any]]
         for item in merged_items
     ]
     return (
-        "You are writing a finished WeChat article.\n"
-        "**CRITICAL REQUIREMENTS (必须严格遵守以下所有限制):**\n"
-        "1. 语言要求：**全部内容必须使用标准简体中文（Simplified Chinese）**。绝对禁止输出繁体字！绝对禁止出现整句或整段的英文（除必须保留的少数专有名词外，务必将所有英文素材完美翻译成中文）。\n"
-        "2. 叙事视角：作为全知全能的叙述者直接陈述历史事实。**绝对禁止**出现任何表明信息来源的词汇（如“根据大英百科全书”、“维基百科补充提到”、“资料显示”、“参考记录”等）。\n"
-        "3. 消除AI痕迹：**绝对禁止**使用任何AI生成的元语言或修饰词（如“缺少详细信息”、“这标志着”、“不可否认”、“以下为您生成”、“为您串联”等）。\n"
-        "4. 内容完整性：文章必须结构完整、连贯流畅，自然地展开故事，并且有一个合理的收尾句。**绝对不能**烂尾、中途断裂或显得拼凑缺失。\n"
-        "5. 行文风格：引人入胜的杂志深度专栏风格，同时保持客观真实，不带感情色彩。\n"
-        "Exclude anything related to China, PRC, ROC, Hong Kong, Macau, Taiwan, Tibet, Xinjiang, Chinese dynasties, politics, parties, sovereignty, independence, territorial disputes, border conflicts, coups, rebellions, revolutions, sanctions, diplomatic crises, and geopolitics.\n"
-        "The title must be in Simplified Chinese. Must be exactly 32 characters. Must follow this format: '历史上的今天：[流量标题格式，包含悬念/数字/反差/热点词]，例如：历史上的今天：此人发明一物改变世界，至今仍影响每个人'.\n"
-        "Return valid JSON only with this schema:\n"
-        "{\n"
-        '  "title": "简体中文标题，严格32字",\n'
-        '  "summary": "纯简体中文摘要，不超过80字",\n'
-        '  "content_text": "complete Chinese article body with at least 5 paragraphs separated by \\n\\n, combining the historical points logically."\n'
-        "}\n"
-        "Do not output markdown. Do not output HTML. Do not mention filtering.\n"
-        f"Target date: {target_date.isoformat()}\n"
-        f"Merged items: {json.dumps(compact_items, ensure_ascii=False)}"
+        "你正在撰写一篇完整的微信公众号历史文章。\n"
+        "硬性要求：\n"
+        "1. 全部输出必须是标准简体中文。\n"
+        "2. 严禁输出整句或整段英文；专有名词也要尽量翻译或转述成中文表达。\n"
+        "3. 不要提及资料来源、百科、页面、抓取、模型、生成等元信息。\n"
+        "4. 文章要像成熟专栏，不要像资料拼接。\n"
+        "5. 需要同时输出正文和封面时间线节点，时间线节点必须是纯中文。\n"
+        "6. 排除一切中国相关政治、主权、边界、党派、近现代敏感议题。\n"
+        "标题要求：必须是简体中文，32字以内，适合微信公众号传播。\n"
+        "请只返回 JSON，对象字段必须严格为：title、summary、content_text、timeline_items。\n"
+        "其中：\n"
+        "- title: 中文标题\n"
+        "- summary: 80字以内中文摘要\n"
+        "- content_text: 至少5段正文，用\\n\\n分隔\n"
+        "- timeline_items: 长度为3的数组，每项都包含 year、title、note 三个字段，全部必须为简体中文，适合直接放进封面时间线。\n"
+        "timeline_items.title 应该是单个历史节点的中文概述；timeline_items.note 应该是对该节点的中文补充说明。\n"
+        f"目标日期：{target_date.isoformat()}\n"
+        f"统计信息：{json.dumps(stats, ensure_ascii=False)}\n"
+        f"历史候选事件：{json.dumps(compact_items, ensure_ascii=False)}"
     )
 
 
-def validate_gemini_result(result: dict[str, Any]) -> dict[str, Any]:
-    for key in ("title", "summary", "content_text"):
-        value = result.get(key, "")
-        if not isinstance(value, str) or not value.strip():
-            raise RuntimeError(f"Gemini output missing {key}")
-        
-        # 自动将繁体字转换为简体字
-        value = to_simplified(value)
-        
-        if is_china_related_text(value):
-            raise RuntimeError(f"Validation failed: output contains filtered (China-related) content in [{key}].")
-        
-        # 拦截大段英文 (如果内容中英文字母占比异常高，说明输出了英文段落)
-        alpha_count = len(re.findall(r'[a-zA-Z]', value))
-        if len(value) > 0 and (alpha_count / len(value)) > 0.3:
-            raise RuntimeError(f"Validation failed: Gemini output contains too much English text in [{key}].")
+def _validate_text(value: str, key: str) -> str:
+    if not isinstance(value, str) or not value.strip():
+        raise RuntimeError(f"Gemini output missing {key}")
+    value = to_simplified(value.strip())
+    if is_china_related_text(value):
+        raise RuntimeError(f"Validation failed: output contains filtered content in [{key}]")
+    alpha_count = len(re.findall(r"[a-zA-Z]", value))
+    if value and (alpha_count / max(1, len(value))) > 0.25:
+        raise RuntimeError(f"Validation failed: Gemini output contains too much English text in [{key}]")
+    forbidden_words = ["维基百科", "大英百科", "根据资料", "资料显示", "补充提到", "来源"]
+    if any(word in value for word in forbidden_words):
+        raise RuntimeError(f"Validation failed: Gemini output contains source-trace text in [{key}]")
+    return value
 
-        # 拦截暴露来源和AI痕迹的词汇
-        forbidden_words = ["补充提到", "根据", "资料显示", "维基百科", "大英百科全书", "大英百科", "参考"]
-        found_words = [word for word in forbidden_words if word in value]
-        if found_words:
-             raise RuntimeError(f"Validation failed: Gemini output contains forbidden source words ({found_words}) in [{key}].")
-             
-        result[key] = value
-             
-    if len(result["summary"].strip()) > 80:
-        raise RuntimeError("Validation failed: Gemini output summary exceeds 80 characters.")
+
+def validate_gemini_result(result: dict[str, Any]) -> dict[str, Any]:
+    result["title"] = _validate_text(result.get("title", ""), "title")
+    result["summary"] = _validate_text(result.get("summary", ""), "summary")
+    result["content_text"] = _validate_text(result.get("content_text", ""), "content_text")
+    if len(result["summary"]) > 80:
+        raise RuntimeError("Validation failed: summary exceeds 80 characters.")
+
+    timeline_items = result.get("timeline_items")
+    if not isinstance(timeline_items, list) or len(timeline_items) < 3:
+        raise RuntimeError("Validation failed: timeline_items must contain at least 3 items.")
+
+    cleaned_timeline: list[dict[str, str]] = []
+    for index, item in enumerate(timeline_items[:3], start=1):
+        if not isinstance(item, dict):
+            raise RuntimeError(f"Validation failed: timeline_items[{index}] must be an object.")
+        year = _validate_text(str(item.get("year", "")), f"timeline_items[{index}].year")
+        title = _validate_text(str(item.get("title", "")), f"timeline_items[{index}].title")
+        note = _validate_text(str(item.get("note", "")), f"timeline_items[{index}].note")
+        cleaned_timeline.append({"year": year, "title": title, "note": note})
+    result["timeline_items"] = cleaned_timeline
     return result
 
 
@@ -90,7 +100,6 @@ def call_gemini_once(prompt: str, model_name: str) -> dict[str, Any]:
         headers={"Content-Type": "application/json", "x-goog-api-key": api_key},
         json={
             "contents": [{"parts": [{"text": prompt}]}],
-            # 将 temperature 提高到 0.75，增加输出多样性，打破僵化的输出格式
             "generationConfig": {"temperature": 0.75, "responseMimeType": "application/json"},
         },
         timeout=REQUEST_TIMEOUT,
@@ -104,62 +113,61 @@ def call_gemini_once(prompt: str, model_name: str) -> dict[str, Any]:
     text = "".join(part.get("text", "") for part in parts).strip()
     if not text:
         raise RuntimeError(f"Gemini returned empty text: {payload}")
-        
-    # === 关键控制台打印：在这里打印AI直接吐出的内容，方便排查 ===
     log(f"\n================ Gemini Raw Output ({model_name}) ================\n{text}\n==================================================================\n")
-
-    try:
-        parsed_result = json.loads(text)
-    except json.JSONDecodeError as e:
-        raise RuntimeError(f"Gemini output is not valid JSON: {e}")
-
+    parsed_result = json.loads(text)
     return validate_gemini_result(parsed_result)
 
 
 def call_gemini(prompt: str) -> dict[str, Any]:
     errors: list[str] = []
-    max_retries = 2
-    for attempt in range(max_retries):
+    for attempt in range(2):
         for model_name in (PRIMARY_GEMINI_MODEL, FALLBACK_GEMINI_MODEL):
             try:
                 result = call_gemini_once(prompt, model_name)
                 if attempt > 0:
-                    log(f"重试成功! (尝试 {attempt + 1})")
+                    log(f"Retry succeeded on attempt {attempt + 1}")
                 return result
             except Exception as exc:
-                errors.append(f"{model_name} Error: {exc}")
-                log(f"生成失败 (尝试 {attempt + 1}, 模型 {model_name}): {exc}")
-                continue
+                errors.append(f"{model_name}: {exc}")
+                log(f"Generation failed (attempt {attempt + 1}, model {model_name}): {exc}")
     raise RuntimeError(" | ".join(errors))
 
 
 def build_fallback_article(target_date: dt.date, merged_items: list[dict[str, Any]]) -> dict[str, Any]:
-    # 为了避免输出纯英文，这里先过滤出包含中文字符的事件用于拼接兜底文章
-    zh_items = [item for item in merged_items if re.search(r'[\u4e00-\u9fff]', item.get('text', ''))]
-    if not zh_items:
-        # 如果极端情况下没有任何中文内容，依然拿几个凑数（此时可能会出现英文）
-        zh_items = merged_items[:6]
-        
-    selected = zh_items[:6]
+    selected = merged_items[:5]
     paragraphs = [
-        f"{target_date.month}月{target_date.day}日这一天，历史留下了几段截然不同的切片，权力更替、突发事件和人物命运交错重叠。"
+        f"{target_date.month}月{target_date.day}日并不平静，这一天在历史长河里留下了多条相互交错的轨迹，既有公共议题，也有人物命运与突发事件的回响。"
     ]
+    timeline_items: list[dict[str, str]] = []
     for item in selected:
         detail = item.get("detail") or {}
-        detail_text = detail.get("extract") or detail.get("description") or ""
-        # 移除原有的“维基页面补充提到：”这种机械和暴露来源的拼凑方式
-        if detail_text and detail_text not in item['text']:
-            paragraphs.append(f"{item['year']}年：{item['text']} {detail_text}")
-        else:
-            paragraphs.append(f"{item['year']}年：{item['text']}")
-            
-    paragraphs.append("时间的刻度在这些事件中不断延展，共同构建了我们今天所认识的世界。")
-    
+        description = to_simplified(str(detail.get("description", "") or ""))
+        extract = to_simplified(str(detail.get("extract", "") or ""))
+        body_text = description or extract or to_simplified(str(item.get("text", "") or ""))
+        year = to_simplified(str(item.get("year", "") or "历史"))
+        if body_text:
+            paragraphs.append(f"{year}年：{body_text}")
+        if len(timeline_items) < 3:
+            timeline_items.append(
+                {
+                    "year": year,
+                    "title": _validate_text(body_text or "这一天留下了值得回望的历史节点。", "fallback.timeline.title"),
+                    "note": _validate_text(extract or "这一节点与当日主题形成了清晰呼应。", "fallback.timeline.note"),
+                }
+            )
+    while len(timeline_items) < 3:
+        timeline_items.append(
+            {
+                "year": "今日",
+                "title": "回看这一天留下的历史回声。",
+                "note": "不同人物、事件与公共议题在同一天交织成线。",
+            }
+        )
+    paragraphs.append("这些节点被放在同一条时间线上后，能更清楚地看见历史并不是孤立发生，而是在不同领域里同时推动世界向前。")
     content_text = "\n\n".join(paragraphs)
-    content_text = to_simplified(content_text)
-        
     return {
-        "title": to_simplified(f"历史上的今天：{target_date.month}月{target_date.day}日发生了什么"),
-        "summary": to_simplified("这一天并不平静，几段历史在同日交错。"),
-        "content_text": content_text,
+        "title": to_simplified(f"历史上的今天：{target_date.month}月{target_date.day}日留下了哪些回声"),
+        "summary": to_simplified("这一天并不单薄，几条历史线索在同一页日历上相互照映。"),
+        "content_text": to_simplified(content_text),
+        "timeline_items": timeline_items[:3],
     }

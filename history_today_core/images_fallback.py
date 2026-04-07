@@ -15,31 +15,12 @@ def _clip(text: str, limit: int) -> str:
     return cleaned[: max(0, limit - 1)].rstrip() + "..."
 
 
-def _pick_chinese_title(item: dict[str, object]) -> str:
-    detail = item.get("detail") if isinstance(item.get("detail"), dict) else {}
-    description = to_simplified(normalize_text(str((detail or {}).get("description", "") or "")))
-    extract = to_simplified(normalize_text(str((detail or {}).get("extract", "") or "")))
-    return description or extract or "回看这一节点与当日主题的关联。"
-
-
-def _pick_chinese_meta(item: dict[str, object], title_text: str) -> str:
-    detail = item.get("detail") if isinstance(item.get("detail"), dict) else {}
-    extract = to_simplified(normalize_text(str((detail or {}).get("extract", "") or "")))
-    description = to_simplified(normalize_text(str((detail or {}).get("description", "") or "")))
-    candidate = extract or description
-    if candidate == title_text:
-        return "沿着时间线回看这一天在历史中的位置与影响。"
-    return candidate or "沿着时间线回看这一天在历史中的位置与影响。"
-
-
-def _build_timeline_rows(merged_items: list[dict[str, object]]) -> str:
+def _build_timeline_rows(timeline_items: list[dict[str, object]]) -> str:
     cards: list[str] = []
-    for index, item in enumerate(merged_items, start=1):
-        year = escape(_clip(str(item.get("year", "") or "历史"), 12))
-        title_text = _pick_chinese_title(item)
-        meta_text = _pick_chinese_meta(item, title_text)
-        title = escape(_clip(title_text, 66))
-        meta = escape(_clip(meta_text, 86))
+    for index, item in enumerate(timeline_items, start=1):
+        year = escape(_clip(to_simplified(str(item.get("year", "") or "历史")), 12))
+        title = escape(_clip(to_simplified(str(item.get("title", "") or "回看这一节点的历史位置。")), 66))
+        meta = escape(_clip(to_simplified(str(item.get("note", "") or "沿着时间线回看这一天在历史中的位置与影响。")), 86))
         side_class = "left" if index % 2 else "right"
         cards.append(
             "<article class='timeline-row'>"
@@ -59,7 +40,7 @@ def _build_cover_html(article: dict[str, object], merged_items: list[dict[str, o
     title = escape(_clip(to_simplified(str(article.get("title", "") or "历史上的今天")), 34))
     summary = escape(_clip(to_simplified(str(article.get("summary", "") or "")), 140))
     day_label = f"{target_date.month:02d}.{target_date.day:02d}"
-    timeline_rows = _build_timeline_rows(merged_items)
+    timeline_rows = _build_timeline_rows(article.get("timeline_items") or [])
     if not timeline_rows:
         timeline_rows = (
             "<article class='timeline-row'>"
@@ -368,8 +349,8 @@ def generate_fallback_event_image(
     index: int,
 ) -> str:
     year = escape(_clip(str(item.get("year", "") or "历史"), 20))
-    title_text = _pick_chinese_title(item)
-    meta_text = _pick_chinese_meta(item, title_text)
+    title_text = to_simplified(normalize_text(str(item.get("title", "") or "回看这一事件在时间线中的位置。")))
+    meta_text = to_simplified(normalize_text(str(item.get("note", "") or "回看这一事件在时间线中的位置。")))
     title = escape(_clip(title_text, 84))
     meta = escape(_clip(meta_text, 160))
     html = f"""<!DOCTYPE html>

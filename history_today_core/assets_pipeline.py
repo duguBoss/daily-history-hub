@@ -17,6 +17,7 @@ def download_assets(
     merged_items: list[dict[str, Any]],
     lang: str,
     article: dict[str, Any] | None = None,
+    include_event_images: bool = False,
 ) -> tuple[list[str], list[str]]:
     del lang  # Reserved for future use.
     budget_seconds = int(os.environ.get("IMAGE_GENERATION_BUDGET_SECONDS", "360"))
@@ -34,7 +35,8 @@ def download_assets(
         absolute_path = local_path if local_path.is_absolute() else (Path.cwd() / local_path)
         return github_asset_url(absolute_path.relative_to(Path.cwd()))
 
-    log(f"Image generation budget: {budget_seconds}s (cover + up to 4 event images)")
+    mode_label = "cover only" if not include_event_images else "cover + up to 4 event images"
+    log(f"Image generation budget: {budget_seconds}s ({mode_label})")
     if article:
         if time.monotonic() - started_at >= budget_seconds:
             log("Image generation budget reached before cover generation, skipping cover")
@@ -59,6 +61,11 @@ def download_assets(
                 except Exception as fallback_exc:
                     log(f"Fallback cover generation failed: {fallback_exc}")
                     cover_url = ""
+
+    if not include_event_images:
+        log("Event image generation disabled for this run")
+        all_images = [cover_url] if cover_url else []
+        return all_images, image_urls
 
     if quota_exhausted:
         log("MiniMax quota exhausted; switching event images to local SVG fallback mode")

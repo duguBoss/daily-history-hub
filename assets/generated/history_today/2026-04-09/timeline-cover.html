@@ -1,0 +1,254 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>历史上的今天时间线封面</title>
+  <style>
+    :root {
+      --ink: #1f2937;
+      --muted: #6b7280;
+      --accent: #b7791f;
+      --deep: #202a36;
+      --shadow: 0 22px 60px rgba(31, 41, 55, 0.10);
+    }
+    * {
+      box-sizing: border-box;
+    }
+    body {
+      margin: 0;
+      background:
+        radial-gradient(circle at top left, rgba(183,121,31,0.10), transparent 28%),
+        linear-gradient(180deg, #f5efe5 0%, #fbf8f3 52%, #f0e6d6 100%);
+      color: var(--ink);
+      font-family: "Noto Serif SC", "Source Han Serif SC", "Songti SC", serif;
+    }
+    .page {
+      width: 1600px;
+      margin: 0 auto;
+      padding: 52px 56px 72px;
+    }
+    .shell {
+      background: linear-gradient(180deg, rgba(255,250,243,0.96), rgba(255,248,238,0.98));
+      border: 1px solid rgba(178, 148, 103, 0.22);
+      border-radius: 34px;
+      box-shadow: var(--shadow);
+      overflow: hidden;
+    }
+    .hero {
+      display: grid;
+      grid-template-columns: 420px 1fr;
+      border-bottom: 1px solid rgba(178, 148, 103, 0.16);
+      min-height: 420px;
+    }
+    .hero-aside {
+      background: linear-gradient(180deg, #202a36 0%, #263242 100%);
+      color: #fff;
+      padding: 56px 42px 48px;
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+    }
+    .eyebrow {
+      font-family: "Segoe UI", "PingFang SC", sans-serif;
+      font-size: 22px;
+      letter-spacing: 0.18em;
+      color: #f0d4a5;
+      text-transform: uppercase;
+    }
+    .date-block {
+      margin-top: 26px;
+    }
+    .date {
+      font-size: 74px;
+      line-height: 0.95;
+      font-weight: 700;
+      margin: 0 0 14px;
+    }
+    .subdate {
+      font-family: "Segoe UI", "PingFang SC", sans-serif;
+      font-size: 24px;
+      color: rgba(255,255,255,0.74);
+      letter-spacing: 0.08em;
+    }
+    .hero-note {
+      border-top: 1px solid rgba(240,212,165,0.26);
+      padding-top: 20px;
+      font-family: "Segoe UI", "PingFang SC", sans-serif;
+      font-size: 22px;
+      line-height: 1.7;
+      color: rgba(255,255,255,0.82);
+    }
+    .hero-main {
+      padding: 56px 62px 48px;
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+    }
+    .kicker {
+      font-family: "Segoe UI", "PingFang SC", sans-serif;
+      font-size: 18px;
+      letter-spacing: 0.18em;
+      color: #9a7b4f;
+      margin-bottom: 18px;
+    }
+    .hero-title {
+      font-size: 62px;
+      line-height: 1.18;
+      margin: 0;
+      color: #18202b;
+    }
+    .hero-divider {
+      width: 88px;
+      height: 2px;
+      background: linear-gradient(90deg, var(--accent), rgba(183,121,31,0.18));
+      margin: 28px 0 24px;
+    }
+    .hero-summary {
+      font-family: "Segoe UI", "PingFang SC", sans-serif;
+      font-size: 28px;
+      line-height: 1.9;
+      color: #5e6877;
+      margin: 0;
+      max-width: 930px;
+    }
+    .timeline-wrap {
+      position: relative;
+      padding: 48px 68px 64px;
+    }
+    .timeline-head {
+      display: grid;
+      grid-template-columns: 240px 1fr;
+      gap: 36px;
+      align-items: end;
+      margin-bottom: 36px;
+    }
+    .timeline-label {
+      font-family: "Segoe UI", "PingFang SC", sans-serif;
+      font-size: 22px;
+      letter-spacing: 0.16em;
+      color: #8b7355;
+    }
+    .timeline-caption {
+      font-family: "Segoe UI", "PingFang SC", sans-serif;
+      font-size: 24px;
+      color: #7b6b56;
+      line-height: 1.8;
+      padding-bottom: 10px;
+      border-bottom: 1px solid rgba(178, 148, 103, 0.18);
+    }
+    .timeline {
+      position: relative;
+      padding-top: 12px;
+    }
+    .timeline::before {
+      content: "";
+      position: absolute;
+      left: 50%;
+      top: 0;
+      bottom: 0;
+      width: 3px;
+      transform: translateX(-50%);
+      background: linear-gradient(180deg, rgba(183,121,31,0.24), rgba(183,121,31,0.50), rgba(183,121,31,0.14));
+    }
+    .timeline-row {
+      position: relative;
+      min-height: 180px;
+      margin-bottom: 22px;
+    }
+    .timeline-dot {
+      position: absolute;
+      left: 50%;
+      top: 34px;
+      transform: translateX(-50%);
+      width: 52px;
+      height: 52px;
+      border-radius: 50%;
+      background: #fff;
+      border: 2px solid rgba(183,121,31,0.26);
+      box-shadow: 0 10px 28px rgba(183,121,31,0.16);
+      color: var(--accent);
+      font-family: "Segoe UI", sans-serif;
+      font-size: 18px;
+      font-weight: 700;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      z-index: 2;
+    }
+    .timeline-card {
+      width: calc(50% - 62px);
+      background: rgba(255, 251, 244, 0.92);
+      border: 1px solid rgba(178, 148, 103, 0.18);
+      border-radius: 24px;
+      padding: 26px 28px 24px;
+      box-shadow: 0 16px 38px rgba(31,41,55,0.07);
+      position: relative;
+    }
+    .timeline-card.left {
+      margin-right: auto;
+    }
+    .timeline-card.right {
+      margin-left: auto;
+    }
+    .timeline-year {
+      font-family: "Segoe UI", sans-serif;
+      font-size: 20px;
+      letter-spacing: 0.12em;
+      color: var(--accent);
+    }
+    .timeline-divider {
+      width: 100%;
+      height: 1px;
+      background: linear-gradient(90deg, rgba(183,121,31,0.26), rgba(183,121,31,0.05));
+      margin: 12px 0 18px;
+    }
+    .timeline-title {
+      font-size: 34px;
+      line-height: 1.6;
+      color: var(--deep);
+      margin: 0 0 14px;
+    }
+    .timeline-meta {
+      font-family: "Segoe UI", "PingFang SC", sans-serif;
+      font-size: 24px;
+      line-height: 1.9;
+      color: var(--muted);
+      margin: 0;
+    }
+  </style>
+</head>
+<body>
+  <main class="page">
+    <section class="shell">
+      <header class="hero">
+        <aside class="hero-aside">
+          <div>
+            <div class="eyebrow">历史上的今天</div>
+            <div class="date-block">
+              <p class="date">04.09</p>
+              <div class="subdate">2026 / 04 / 09</div>
+            </div>
+          </div>
+          <div class="hero-note">以时间线方式整理当日节点，用分段、分隔线和留白建立阅读节奏，不把所有内容压成一段。</div>
+        </aside>
+        <section class="hero-main">
+          <div class="kicker">今日历史时间线</div>
+          <h1 class="hero-title">历史今天：从硝烟散去到星辰大海，翻开四月九日的文明篇章</h1>
+          <div class="hero-divider"></div>
+          <p class="hero-summary">1865年美国内战迎来转折，1821年诗人波德莱尔降生。这一天见证了战争的终结、艺术的觉醒与航天时代的开启，折射出人类在废墟与梦想间的不断跋涉。</p>
+        </section>
+      </header>
+      <section class="timeline-wrap">
+        <div class="timeline-head">
+          <div class="timeline-label">事件时间线</div>
+          <div class="timeline-caption">按时间线展开今日历史节点。每个节点独立成段，使用年份、分隔线与说明文字分层组织，避免大段内容堆叠。</div>
+        </div>
+        <section class="timeline">
+          <article class='timeline-row'><div class='timeline-dot'>01</div><section class='timeline-card left'><div class='timeline-year'>1821</div><div class='timeline-divider'></div><p class='timeline-title'>现代诗歌先驱波德莱尔出生</p><p class='timeline-meta'>法国象征主义文学鼻祖查尔斯·波德莱尔在巴黎诞生，其代表作深刻影响了现代文学的美学进程。</p></section></article><article class='timeline-row'><div class='timeline-dot'>02</div><section class='timeline-card right'><div class='timeline-year'>1865</div><div class='timeline-divider'></div><p class='timeline-title'>阿波马托克斯法院受降</p><p class='timeline-meta'>罗伯特·李将军向格兰特投降，标志着美国内战大规模军事行动的结束，开启了漫长的重建时期。</p></section></article><article class='timeline-row'><div class='timeline-dot'>03</div><section class='timeline-card left'><div class='timeline-year'>1959</div><div class='timeline-divider'></div><p class='timeline-title'>“水星计划”七杰正式亮相</p><p class='timeline-meta'>美国国家航空航天局公布首批七名宇航员名单，人类载人航天事业进入了实质性的竞争与探索阶段。</p></section></article>
+        </section>
+      </section>
+    </section>
+  </main>
+</body>
+</html>
